@@ -709,7 +709,6 @@ function onContaMuda(){
   var v=document.getElementById('l-conta').value;
   var isCC=v.startsWith('cc_');
   document.getElementById('rep-parcelado').style.display=isCC?'':'none';
-  document.getElementById('opt-parc').style.display=isCC?'':'none';
   if(!isCC&&S.repTipo==='parcelado') setRep('none');
   var isTransf=S.tipoLanc==='transferencia';
   document.getElementById('fg-dest').style.display=isTransf?'':'none';
@@ -752,50 +751,78 @@ function calcParc(){
 }
 
 function abrirModalLanc(){
-  editId=null;
-  document.getElementById('ml-title').textContent='Novo lançamento';
-  document.getElementById('btn-excluir').style.display='none';
-  S.tipoLanc='despesa'; S.repTipo='none';
-  setTipo('despesa'); setRep('none');
-  document.getElementById('l-val').value='';
-  document.getElementById('l-desc').value='';
-  document.getElementById('l-data').value=new Date().toISOString().split('T')[0];
-  document.getElementById('l-status').value='nao_pago';
-  popSelects(); abrirModal('modal-lanc');
+  try {
+    editId=null;
+    document.getElementById('ml-title').textContent='Novo lançamento';
+    document.getElementById('btn-excluir').style.display='none';
+    S.tipoLanc='despesa'; S.repTipo='none';
+    setTipo('despesa');
+    setRep('none');
+    document.getElementById('l-val').value='';
+    document.getElementById('l-desc').value='';
+    document.getElementById('l-data').value=new Date().toISOString().split('T')[0];
+    document.getElementById('l-status').value='nao_pago';
+    abrirModal('modal-lanc');
+  } catch(e){ console.error('abrirModalLanc:',e); alert('Erro ao abrir formulário: '+e.message); }
 }
 
 function editarLanc(id){
-  var t=S.transacoes.find(x=>x.id===id); if(!t) return;
-  editId=id;
-  document.getElementById('ml-title').textContent='Editar lançamento';
-  document.getElementById('btn-excluir').style.display='';
-  S.tipoLanc=t.tipo; S.repTipo=t.rep||'none';
-  // setTipo chama popSelects internamente
-  setTipo(t.tipo);
-  setRep(t.rep||'none');
-  document.getElementById('l-val').value=t.valor;
-  document.getElementById('l-desc').value=t.desc;
-  document.getElementById('l-data').value=t.data||new Date().toISOString().split('T')[0];
-  document.getElementById('l-status').value=t.status||'nao_pago';
-  // categoria — setar após popSelects
-  setTimeout(function(){
-    if(t.catId){
+  try {
+    var t=S.transacoes.find(x=>x.id===id);
+    if(!t){ console.error('Transação não encontrada:',id); return; }
+    editId=id;
+    document.getElementById('ml-title').textContent='Editar lançamento';
+    document.getElementById('btn-excluir').style.display='';
+    S.tipoLanc=t.tipo||'despesa';
+    S.repTipo=t.rep||'none';
+    // setTipo preenche categorias via popSelects
+    setTipo(S.tipoLanc);
+    setRep(S.repTipo);
+    document.getElementById('l-val').value=t.valor||'';
+    document.getElementById('l-desc').value=t.desc||'';
+    document.getElementById('l-data').value=t.data||new Date().toISOString().split('T')[0];
+    document.getElementById('l-status').value=t.status||'nao_pago';
+    // categoria
+    if(t.catId!=null){
       var cs=document.getElementById('l-cat');
-      cs.value=t.catId;
-      if(cs.value!=t.catId) cs.value=String(t.catId);
+      cs.value=String(t.catId);
     }
+    // conta/cartão
     var contaVal=t.contaId?'c_'+t.contaId:(t.cartaoId?'cc_'+t.cartaoId:'');
     if(contaVal) document.getElementById('l-conta').value=contaVal;
-    if(t.rep==='fixo'&&t.freq) document.getElementById('rep-freq').value=t.freq;
-    if(t.rep==='parcelado'&&t.parcTotal) document.getElementById('rep-nparc').value=t.parcTotal;
+    // frequência fixa
+    if(t.rep==='fixo'&&t.freq){
+      var rf=document.getElementById('rep-freq');
+      if(rf) rf.value=t.freq;
+    }
+    // parcelas
+    if(t.rep==='parcelado'&&t.parcTotal){
+      var rp=document.getElementById('rep-nparc');
+      if(rp) rp.value=t.parcTotal;
+    }
+    // mês fatura — recriar opções e selecionar
     onContaMuda();
     if(t.mesFatura){
       var mfSel=document.getElementById('l-mes-fatura');
-      if(mfSel){for(var oi=0;oi<mfSel.options.length;oi++){if(mfSel.options[oi].value===t.mesFatura){mfSel.selectedIndex=oi;break;}}}
+      if(mfSel){
+        // adicionar opção se não existir
+        var found=false;
+        for(var oi=0;oi<mfSel.options.length;oi++){
+          if(mfSel.options[oi].value===t.mesFatura){mfSel.selectedIndex=oi;found=true;break;}
+        }
+        if(!found){
+          var pts=t.mesFatura.split('-');
+          var o=document.createElement('option');
+          o.value=t.mesFatura;
+          o.textContent=meses[parseInt(pts[1])-1]+' '+pts[0];
+          mfSel.insertBefore(o,mfSel.firstChild);
+          mfSel.selectedIndex=0;
+        }
+      }
     }
     calcParc();
-  },10);
-  abrirModal('modal-lanc');
+    abrirModal('modal-lanc');
+  } catch(e){ console.error('editarLanc:',e); alert('Erro ao editar: '+e.message); }
 }
 
 function excluirLanc(){
@@ -808,37 +835,70 @@ function excluirLanc(){
 }
 
 function salvarLanc(){
-  var val=parseFloat(document.getElementById('l-val').value);
-  var desc=document.getElementById('l-desc').value.trim();
-  if(!val||val<=0){alert('Informe um valor válido');return;}
-  if(!desc){alert('Informe a descrição');return;}
-  var isTransf=S.tipoLanc==='transferencia';
-  var catId=isTransf?null:parseInt(document.getElementById('l-cat').value);
-  var cv=document.getElementById('l-conta').value;
-  var contaId=null,cartaoId=null;
-  if(cv.startsWith('c_')) contaId=parseInt(cv.replace('c_',''));
-  else if(cv.startsWith('cc_')) cartaoId=parseInt(cv.replace('cc_',''));
-  var data=document.getElementById('l-data').value;
-  var status=document.getElementById('l-status').value;
-  var rep=S.repTipo,freq=null,parcAtual=null,parcTotal=null;
-  var mesFatura=null;
-  var fgMes=document.getElementById('fg-mes-fatura');
-  if(fgMes&&fgMes.style.display!=='none') mesFatura=document.getElementById('l-mes-fatura').value;
-  if(rep==='fixo') freq=document.getElementById('rep-freq').value;
-  if(rep==='parcelado'){
-    parcAtual=editId?(S.transacoes.find(x=>x.id===editId)||{}).parcAtual||1:1;
-    parcTotal=parseInt(document.getElementById('rep-nparc').value)||2;
-    // dividir valor: parcela base arredondada para baixo, arredondamento vai na 1ª
-    var parcBase=Math.floor(val/parcTotal*100)/100;
-    var resto=Math.round((val-parcBase*parcTotal)*100)/100;
-    val=parcAtual===1?Math.round((parcBase+resto)*100)/100:parcBase;
-  }
-  var obj={id:editId||S.nextId++,tipo:S.tipoLanc,valor:val,desc,catId,contaId,cartaoId,data,status,rep,freq,parcAtual,parcTotal,mesFatura};
-  if(editId){var i=S.transacoes.findIndex(x=>x.id===editId);if(i>=0)S.transacoes[i]=obj;}
-  else S.transacoes.push(obj);
-  saveData(); fecharModal('modal-lanc');
-  var ap=document.querySelector('.page.active');
-  if(ap) renderPage(ap.id.replace('page-',''));
+  try {
+    var val=parseFloat(document.getElementById('l-val').value);
+    var desc=document.getElementById('l-desc').value.trim();
+    if(!val||val<=0){alert('Informe um valor válido');return;}
+    if(!desc){alert('Informe a descrição');return;}
+    var isTransf=S.tipoLanc==='transferencia';
+    var catId=null;
+    if(!isTransf){
+      var catEl=document.getElementById('l-cat');
+      catId=catEl&&catEl.value?parseInt(catEl.value):null;
+    }
+    var cv=document.getElementById('l-conta').value||'';
+    var contaId=null,cartaoId=null;
+    if(cv.startsWith('c_')) contaId=parseInt(cv.replace('c_',''));
+    else if(cv.startsWith('cc_')) cartaoId=parseInt(cv.replace('cc_',''));
+    var data=document.getElementById('l-data').value||new Date().toISOString().split('T')[0];
+    var status=document.getElementById('l-status').value||'nao_pago';
+    var rep=S.repTipo||'none';
+    var freq=null,parcAtual=null,parcTotal=null,mesFatura=null;
+    var fgMes=document.getElementById('fg-mes-fatura');
+    if(fgMes&&fgMes.style.display!=='none'){
+      var mfEl=document.getElementById('l-mes-fatura');
+      if(mfEl) mesFatura=mfEl.value||null;
+    }
+    if(rep==='fixo'){
+      var rfEl=document.getElementById('rep-freq');
+      freq=rfEl?rfEl.value:'mensal';
+    }
+    if(rep==='parcelado'){
+      parcAtual=editId?(S.transacoes.find(x=>x.id===editId)||{}).parcAtual||1:1;
+      var rpEl=document.getElementById('rep-nparc');
+      parcTotal=rpEl?parseInt(rpEl.value)||2:2;
+      var parcBase=Math.floor(val/parcTotal*100)/100;
+      var resto=Math.round((val-parcBase*parcTotal)*100)/100;
+      val=parcAtual===1?Math.round((parcBase+resto)*100)/100:parcBase;
+    }
+    var obj={
+      id:editId||S.nextId++,
+      tipo:S.tipoLanc,
+      valor:val,
+      desc:desc,
+      catId:catId,
+      contaId:contaId,
+      cartaoId:cartaoId,
+      data:data,
+      status:status,
+      rep:rep,
+      freq:freq,
+      parcAtual:parcAtual,
+      parcTotal:parcTotal,
+      mesFatura:mesFatura
+    };
+    if(editId){
+      var idx=S.transacoes.findIndex(x=>x.id===editId);
+      if(idx>=0) S.transacoes[idx]=obj;
+      else S.transacoes.push(obj);
+    } else {
+      S.transacoes.push(obj);
+    }
+    saveData();
+    fecharModal('modal-lanc');
+    var ap=document.querySelector('.page.active');
+    if(ap) renderPage(ap.id.replace('page-',''));
+  } catch(e){ console.error('salvarLanc:',e); alert('Erro ao salvar: '+e.message); }
 }
 
 function abrirNovaConta(){ document.getElementById('c-id').value=''; document.getElementById('c-nome').value=''; document.getElementById('c-tipo').value='banco'; document.getElementById('c-saldo').value='0'; document.getElementById('modal-conta-titulo').textContent='Nova conta'; document.getElementById('btn-excluir-conta').style.display='none'; abrirModal('modal-conta'); }
