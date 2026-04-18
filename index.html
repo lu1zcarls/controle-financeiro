@@ -767,18 +767,26 @@ function pagarFatura(ccId){
   var txs=S.transacoes.filter(function(t){return t.cartaoId===ccId&&t.status!=='pago';});
   var total=Math.round(txs.reduce(function(a,b){return a+b.valor;},0)*100)/100;
   if(!total){alert('Fatura já paga!');return;}
-  var opts=S.contas.map(function(c){return '<option value="'+c.id+'">'+(c.tipo==='banco'?'🏦':'💵')+' '+c.nome+' (R$ '+fmt(c.saldo)+')</option>';}).join('');
+  var opts=S.contas.map(function(c){
+    return '<option value="'+c.id+'">'+(c.tipo==='banco'?'🏦':'💵')+' '+c.nome+' (R$ '+fmt(c.saldo)+')</option>';
+  }).join('');
   var div=document.createElement('div');
+  div.id='modal-pagar-fatura';
   div.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:500;display:flex;align-items:center;justify-content:center;padding:1rem';
   div.innerHTML='<div style="background:var(--bg2);border-radius:var(--radius);padding:1.25rem;width:100%;max-width:360px">'
     +'<h2 style="font-size:15px;font-weight:600;margin-bottom:.75rem;color:var(--text)">Pagar fatura</h2>'
     +'<p style="font-size:13px;color:var(--text2);margin-bottom:.75rem">Valor: <strong style="color:var(--red)">R$ '+fmt(total)+'</strong></p>'
     +'<div class="fg"><label>Débitar da conta</label><select id="pagar-conta-sel" style="width:100%;padding:9px;border-radius:var(--radius-sm);border:0.5px solid var(--border2);background:var(--bg3);color:var(--text);font-size:13px">'+opts+'</select></div>'
     +'<div style="display:flex;gap:8px;margin-top:1rem">'
-    +'<button class="btn" style="flex:1" onclick="this.closest('[style*=fixed]').remove()">Cancelar</button>'
+    +'<button class="btn" style="flex:1" onclick="fecharModalPagar()">Cancelar</button>'
     +'<button class="btn primary" style="flex:1" onclick="confirmarPagFatura('+ccId+','+total+',this)">Confirmar</button>'
     +'</div></div>';
   document.body.appendChild(div);
+}
+
+function fecharModalPagar(){
+  var el=document.getElementById('modal-pagar-fatura');
+  if(el) el.remove();
 }
 
 function confirmarPagFatura(ccId,total,btn){
@@ -790,7 +798,7 @@ function confirmarPagFatura(ccId,total,btn){
   txs.forEach(function(t){t.status='pago';});
   conta.saldo=Math.round((conta.saldo-total)*100)/100;
   saveData();
-  btn.closest('[style*=fixed]').remove();
+  fecharModalPagar();
   renderFatura();
   renderDash();
 }
