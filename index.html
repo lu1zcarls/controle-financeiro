@@ -401,8 +401,8 @@ tr:hover td{background:var(--bg3)}
 </div>
 </div>
 
-<div class="modal-bg" id="modal-fatura" style="align-items:stretch;background:var(--bg)">
-<div style="background:var(--bg);width:100%;max-width:560px;height:100%;display:flex;flex-direction:column;overflow:hidden;position:relative">
+<div class="modal-bg" id="modal-fatura" style="align-items:stretch;justify-content:center;background:var(--bg)">
+<div style="background:var(--bg);width:100%;max-width:560px;min-height:100vh;display:flex;flex-direction:column;overflow:hidden;position:relative">
   <!-- Header fatura -->
   <div style="background:var(--bg2);border-bottom:0.5px solid var(--border);padding:.9rem 1rem;display:flex;align-items:center;gap:12px;flex-shrink:0">
     <button onclick="fecharModal('modal-fatura')" style="background:none;border:none;cursor:pointer;color:var(--text);font-size:20px;padding:4px 8px;border-radius:var(--radius-sm)">&#8249;</button>
@@ -660,17 +660,137 @@ function renderCartoesPg(){
   document.getElementById('lista-cartoes-pg').innerHTML=h||'<div class="empty">Nenhum cartão cadastrado</div>';
 }
 
+var _fatCcId=null,_fatMes=null,_fatAno=null;
+
 function abrirFatura(ccId){
-  var cc=S.cartoes.find(c=>c.id===ccId); if(!cc) return;
-  var txs=S.transacoes.filter(t=>t.cartaoId===ccId);
-  var total=txs.reduce((a,b)=>a+b.valor,0);
-  document.getElementById('fat-titulo').textContent='Fatura — '+cc.nome;
-  var h='<div style="font-size:12px;color:var(--text2);margin-bottom:.75rem">Fecha dia '+cc.fechamento+' &bull; Vence dia '+cc.vencimento+'</div>';
-  if(!txs.length) h+='<div class="empty">Nenhum lançamento neste cartão</div>';
-  txs.forEach(t=>{ var cat=S.categorias.find(c=>c.id===t.catId)||{icone:'📋'}; var parc=t.rep==='parcelado'?' ('+t.parcAtual+'/'+t.parcTotal+')':''; h+='<div class="dr"><span>'+cat.icone+' '+t.desc+parc+'</span><span class="red">-R$ '+fmt(t.valor)+'</span></div>'; });
-  if(txs.length) h+='<div style="display:flex;justify-content:space-between;padding-top:.75rem;margin-top:.5rem;border-top:0.5px solid var(--border2);font-weight:600"><span>Total</span><span class="red">R$ '+fmt(total)+'</span></div>';
-  document.getElementById('fat-detalhe').innerHTML=h;
+  var cc=S.cartoes.find(function(c){return c.id===ccId;});
+  if(!cc){console.error('Cartão não encontrado:',ccId);return;}
+  _fatCcId=ccId;
+  _fatMes=S.mesAtual;
+  _fatAno=S.anoAtual;
+  renderFatura();
   abrirModal('modal-fatura');
+}
+
+function navFaturaMes(d){
+  _fatMes+=d;
+  if(_fatMes>11){_fatMes=0;_fatAno++;}
+  if(_fatMes<0){_fatMes=11;_fatAno--;}
+  renderFatura();
+}
+
+function novoLancCartao(){
+  fecharModal('modal-fatura');
+  setTimeout(function(){
+    abrirModalLanc();
+    setTimeout(function(){
+      var sel=document.getElementById('l-conta');
+      if(sel&&_fatCcId){sel.value='cc_'+_fatCcId;onContaMuda();}
+    },80);
+  },50);
+}
+
+function editarLancFatura(id){
+  fecharModal('modal-fatura');
+  setTimeout(function(){editarLanc(id);},100);
+}
+
+function renderFatura(){
+  var cc=S.cartoes.find(function(c){return c.id===_fatCcId;});
+  if(!cc) return;
+  var mlEl=document.getElementById('fat-mes-label');
+  if(mlEl) mlEl.textContent=meses[_fatMes]+' '+_fatAno;
+  var txs=S.transacoes.filter(function(t){
+    if(t.cartaoId!==_fatCcId) return false;
+    if(t.mesFatura){
+      var pts=t.mesFatura.split('-');
+      return parseInt(pts[0])===_fatAno&&parseInt(pts[1])-1===_fatMes;
+    }
+    var d=new Date(t.data+'T12:00:00');
+    var fm,fa;
+    if(d.getDate()<=cc.fechamento){fm=d.getMonth();fa=d.getFullYear();}
+    else{fm=d.getMonth()+1;fa=d.getFullYear();if(fm>11){fm=0;fa++;}}
+    return fm===_fatMes&&fa===_fatAno;
+  });
+  var total=txs.reduce(function(a,b){return a+b.valor;},0);
+  var fatPaga=txs.length>0&&txs.every(function(t){return t.status==='pago';});
+  var hoje=new Date();
+  var vencDate=new Date(_fatAno,_fatMes,cc.vencimento);
+  var atrasada=!fatPaga&&vencDate<hoje&&total>0;
+  var h='';
+  h+='<div class="fat-card">';
+  h+='<div class="fat-card-left">';
+  h+='<div class="fat-card-band">'+cc.bandeira.toUpperCase()+'</div>';
+  h+='<div class="fat-card-nome">'+cc.nome+'</div>';
+  h+='<div class="fat-card-date" style="margin-top:8px">Fechou em<br><strong>'+String(cc.fechamento).padStart(2,'0')+'/'+String(_fatMes+1).padStart(2,'0')+'</strong></div>';
+  h+='<div class="fat-card-date" style="margin-top:4px">Venceu em<br><strong>'+String(cc.vencimento).padStart(2,'0')+'/'+String(_fatMes+1).padStart(2,'0')+'</strong></div>';
+  if(atrasada) h+='<div class="fat-status-atrasada">Atrasada</div>';
+  else if(fatPaga&&total>0) h+='<div class="fat-status-ok">Paga</div>';
+  h+='</div>';
+  h+='<div class="fat-card-right">';
+  h+='<div class="fat-stat"><div class="fat-stat-lbl">Saldo anterior</div><div class="fat-stat-val green">R$ 0,00</div></div>';
+  h+='<div class="fat-stat"><div class="fat-stat-lbl">Gasto mês</div><div class="fat-stat-val red">-R$ '+fmt(total)+'</div></div>';
+  h+='<div class="fat-stat"><div class="fat-stat-lbl">Valor fatura</div><div class="fat-stat-val red">-R$ '+fmt(total)+'</div></div>';
+  h+='</div></div>';
+  if(!fatPaga&&total>0){
+    h+='<button class="fat-pagar" onclick="pagarFatura('+_fatCcId+')">Pagar fatura</button>';
+  }
+  if(!txs.length){
+    h+='<div class="empty" style="padding:2rem 0">Nenhum lançamento nesta fatura</div>';
+  } else {
+    var sorted=txs.slice().sort(function(a,b){return new Date(b.data)-new Date(a.data);});
+    var grupos={};
+    sorted.forEach(function(t){if(!grupos[t.data])grupos[t.data]=[];grupos[t.data].push(t);});
+    Object.keys(grupos).sort(function(a,b){return new Date(b)-new Date(a);}).forEach(function(dk){
+      var d=new Date(dk+'T12:00:00');
+      h+='<div style="font-size:12px;color:var(--text2);padding:8px 0 4px;font-weight:700;text-transform:uppercase;letter-spacing:.04em">'+d.getDate()+' de '+meses[d.getMonth()]+'</div>';
+      grupos[dk].forEach(function(t){
+        var cat=S.categorias.find(function(c){return c.id===t.catId;})||{icone:'💳',nome:'Cartão'};
+        var parc=t.rep==='parcelado'?' ('+t.parcAtual+'/'+t.parcTotal+')':'';
+        var stBadge=t.status==='pago'?'<span class="badge pago" style="margin-left:4px">pago</span>':'<span class="badge npago" style="margin-left:4px">não pago</span>';
+        h+='<div class="fat-tx-row" onclick="editarLancFatura('+t.id+')">';
+        h+='<div class="fat-tx-icon">'+cat.icone+'</div>';
+        h+='<div class="fat-tx-info"><div class="fat-tx-name">'+t.desc+parc+'</div>';
+        h+='<div class="fat-tx-sub">'+cat.nome+stBadge+'</div></div>';
+        h+='<div class="fat-tx-val">-R$ '+fmt(t.valor)+'</div>';
+        h+='</div>';
+      });
+    });
+  }
+  document.getElementById('fat-detalhe').innerHTML=h;
+}
+
+function pagarFatura(ccId){
+  var cc=S.cartoes.find(function(c){return c.id===ccId;}); if(!cc) return;
+  var txs=S.transacoes.filter(function(t){return t.cartaoId===ccId&&t.status!=='pago';});
+  var total=Math.round(txs.reduce(function(a,b){return a+b.valor;},0)*100)/100;
+  if(!total){alert('Fatura já paga!');return;}
+  var opts=S.contas.map(function(c){return '<option value="'+c.id+'">'+(c.tipo==='banco'?'🏦':'💵')+' '+c.nome+' (R$ '+fmt(c.saldo)+')</option>';}).join('');
+  var div=document.createElement('div');
+  div.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:500;display:flex;align-items:center;justify-content:center;padding:1rem';
+  div.innerHTML='<div style="background:var(--bg2);border-radius:var(--radius);padding:1.25rem;width:100%;max-width:360px">'
+    +'<h2 style="font-size:15px;font-weight:600;margin-bottom:.75rem;color:var(--text)">Pagar fatura</h2>'
+    +'<p style="font-size:13px;color:var(--text2);margin-bottom:.75rem">Valor: <strong style="color:var(--red)">R$ '+fmt(total)+'</strong></p>'
+    +'<div class="fg"><label>Débitar da conta</label><select id="pagar-conta-sel" style="width:100%;padding:9px;border-radius:var(--radius-sm);border:0.5px solid var(--border2);background:var(--bg3);color:var(--text);font-size:13px">'+opts+'</select></div>'
+    +'<div style="display:flex;gap:8px;margin-top:1rem">'
+    +'<button class="btn" style="flex:1" onclick="this.closest('[style*=fixed]').remove()">Cancelar</button>'
+    +'<button class="btn primary" style="flex:1" onclick="confirmarPagFatura('+ccId+','+total+',this)">Confirmar</button>'
+    +'</div></div>';
+  document.body.appendChild(div);
+}
+
+function confirmarPagFatura(ccId,total,btn){
+  var sel=document.getElementById('pagar-conta-sel');
+  var contaId=parseInt(sel.value);
+  var conta=S.contas.find(function(c){return c.id===contaId;});
+  if(!conta){alert('Selecione uma conta');return;}
+  var txs=S.transacoes.filter(function(t){return t.cartaoId===ccId&&t.status!=='pago';});
+  txs.forEach(function(t){t.status='pago';});
+  conta.saldo=Math.round((conta.saldo-total)*100)/100;
+  saveData();
+  btn.closest('[style*=fixed]').remove();
+  renderFatura();
+  renderDash();
 }
 
 function renderCads(){
