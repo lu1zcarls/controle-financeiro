@@ -5,7 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Controle Financeiro Pessoal</title>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f5f5f0;color:#1a1a1a;font-size:14px}
@@ -139,6 +138,12 @@ tr:hover td{background:var(--bg3)}
 .loading-screen p{color:var(--text2);font-size:13px}
 .spinner{width:32px;height:32px;border:3px solid var(--border2);border-top-color:var(--green);border-radius:50%;animation:spin .8s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
+
+.emoji-grid{display:grid;grid-template-columns:repeat(8,1fr);gap:4px;max-height:160px;overflow-y:auto;margin-top:6px;padding:4px;background:var(--bg3);border-radius:var(--radius-sm);border:0.5px solid var(--border)}
+.emoji-opt{font-size:20px;text-align:center;padding:4px;border-radius:var(--radius-sm);cursor:pointer;background:none;border:none;transition:background .1s}
+.emoji-opt:hover{background:var(--bg4)}
+.emoji-opt.sel{background:var(--green-bg);outline:2px solid var(--green)}
+.emoji-preview{font-size:28px;text-align:center;padding:6px;background:var(--bg3);border-radius:var(--radius-sm);border:0.5px solid var(--border);min-width:44px}
 </style>
 </head>
 <body>
@@ -334,7 +339,15 @@ tr:hover td{background:var(--bg3)}
   <h2 id="modal-cat-titulo">Nova categoria</h2>
   <input type="hidden" id="cat-id">
   <div class="fg"><label>Nome</label><input type="text" id="cat-nome" placeholder="Ex: Alimentação, Lazer..."></div>
-  <div class="fg"><label>Ícone (emoji)</label><input type="text" id="cat-icone" maxlength="2" placeholder="🛒"></div>
+  <div class="fg">
+    <label>Ícone</label>
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+      <span class="emoji-preview" id="cat-icone-preview">📋</span>
+      <span style="font-size:12px;color:var(--text2)">Selecione abaixo</span>
+    </div>
+    <input type="hidden" id="cat-icone" value="📋">
+    <div class="emoji-grid" id="emoji-grid"></div>
+  </div>
   <div class="fg"><label>Tipo</label><select id="cat-tipo"><option value="despesa">Despesa</option><option value="receita">Receita</option><option value="ambos">Ambos</option></select></div>
   <div style="display:flex;gap:8px;margin-top:1rem">
     <button class="btn" style="flex:1" onclick="fecharModal('modal-cat')">Cancelar</button>
@@ -718,9 +731,9 @@ function setTipo(t){
 function setRep(r){
   S.repTipo=r;
   ['none','fixo','parcelado'].forEach(x=>{var el=document.getElementById('rep-'+x);if(el)el.classList.toggle('active',x===r);});
-  document.getElementById('rep-opts').style.display=(r==='fixo'||r==='parcelado')?'':'none';
+  // fixo mostra frequência; parcelado mostra só qtd parcelas; none oculta tudo
+  document.getElementById('rep-opts').style.display=r==='fixo'?'':'none';
   document.getElementById('fg-nparc').style.display=r==='parcelado'?'':'none';
-  if(r==='parcelado') document.getElementById('rep-freq').value='parcelas';
   calcParc();
 }
 
@@ -757,19 +770,32 @@ function editarLanc(id){
   document.getElementById('ml-title').textContent='Editar lançamento';
   document.getElementById('btn-excluir').style.display='';
   S.tipoLanc=t.tipo; S.repTipo=t.rep||'none';
-  setTipo(t.tipo); setRep(t.rep||'none');
+  // setTipo chama popSelects internamente
+  setTipo(t.tipo);
+  setRep(t.rep||'none');
   document.getElementById('l-val').value=t.valor;
   document.getElementById('l-desc').value=t.desc;
-  document.getElementById('l-data').value=t.data;
-  document.getElementById('l-status').value=t.status;
-  // setar categoria após popSelects (já chamado em setTipo)
-  if(t.catId) document.getElementById('l-cat').value=t.catId;
-  document.getElementById('l-conta').value=t.contaId?'c_'+t.contaId:'cc_'+t.cartaoId;
-  if(t.rep==='fixo'&&t.freq) document.getElementById('rep-freq').value=t.freq;
-  if(t.rep==='parcelado'&&t.parcTotal){document.getElementById('rep-nparc').value=t.parcTotal;}
-  onContaMuda();
-  if(t.mesFatura){var mfSel=document.getElementById('l-mes-fatura');if(mfSel){for(var oi=0;oi<mfSel.options.length;oi++){if(mfSel.options[oi].value===t.mesFatura){mfSel.selectedIndex=oi;break;}}}}
-  calcParc(); abrirModal('modal-lanc');
+  document.getElementById('l-data').value=t.data||new Date().toISOString().split('T')[0];
+  document.getElementById('l-status').value=t.status||'nao_pago';
+  // categoria — setar após popSelects
+  setTimeout(function(){
+    if(t.catId){
+      var cs=document.getElementById('l-cat');
+      cs.value=t.catId;
+      if(cs.value!=t.catId) cs.value=String(t.catId);
+    }
+    var contaVal=t.contaId?'c_'+t.contaId:(t.cartaoId?'cc_'+t.cartaoId:'');
+    if(contaVal) document.getElementById('l-conta').value=contaVal;
+    if(t.rep==='fixo'&&t.freq) document.getElementById('rep-freq').value=t.freq;
+    if(t.rep==='parcelado'&&t.parcTotal) document.getElementById('rep-nparc').value=t.parcTotal;
+    onContaMuda();
+    if(t.mesFatura){
+      var mfSel=document.getElementById('l-mes-fatura');
+      if(mfSel){for(var oi=0;oi<mfSel.options.length;oi++){if(mfSel.options[oi].value===t.mesFatura){mfSel.selectedIndex=oi;break;}}}
+    }
+    calcParc();
+  },10);
+  abrirModal('modal-lanc');
 }
 
 function excluirLanc(){
@@ -820,8 +846,29 @@ function editarConta(id){ var c=S.contas.find(x=>x.id===id); if(!c) return; docu
 function excluirConta(){ var id=parseInt(document.getElementById('c-id').value); if(!confirm('Excluir esta conta? Os lançamentos vinculados não serão excluídos.')) return; S.contas=S.contas.filter(c=>c.id!==id); saveData(); fecharModal('modal-conta'); renderCads(); renderDash(); }
 function salvarConta(){ var nome=document.getElementById('c-nome').value.trim(); if(!nome){alert('Informe o nome');return;} var id=parseInt(document.getElementById('c-id').value); var obj={id:id||S.nextId++,nome,tipo:document.getElementById('c-tipo').value,saldo:parseFloat(document.getElementById('c-saldo').value)||0}; if(id){var i=S.contas.findIndex(x=>x.id===id);if(i>=0)S.contas[i]=obj;}else S.contas.push(obj); saveData(); fecharModal('modal-conta'); renderCads(); renderDash(); }
 
-function abrirNovaCat(){ document.getElementById('cat-id').value=''; document.getElementById('cat-nome').value=''; document.getElementById('cat-icone').value=''; document.getElementById('cat-tipo').value='despesa'; document.getElementById('modal-cat-titulo').textContent='Nova categoria'; document.getElementById('btn-excluir-cat').style.display='none'; abrirModal('modal-cat'); }
-function editarCat(id){ var c=S.categorias.find(x=>x.id===id); if(!c) return; document.getElementById('cat-id').value=id; document.getElementById('cat-nome').value=c.nome; document.getElementById('cat-icone').value=c.icone; document.getElementById('cat-tipo').value=c.tipo; document.getElementById('modal-cat-titulo').textContent='Editar categoria'; document.getElementById('btn-excluir-cat').style.display=''; abrirModal('modal-cat'); }
+function abrirNovaCat(){
+  document.getElementById('cat-id').value='';
+  document.getElementById('cat-nome').value='';
+  document.getElementById('cat-icone').value='📋';
+  document.getElementById('cat-icone-preview').textContent='📋';
+  document.getElementById('cat-tipo').value='despesa';
+  document.getElementById('modal-cat-titulo').textContent='Nova categoria';
+  document.getElementById('btn-excluir-cat').style.display='none';
+  renderEmojiGrid('📋');
+  abrirModal('modal-cat');
+}
+function editarCat(id){
+  var c=S.categorias.find(x=>x.id===id); if(!c) return;
+  document.getElementById('cat-id').value=id;
+  document.getElementById('cat-nome').value=c.nome;
+  document.getElementById('cat-icone').value=c.icone||'📋';
+  document.getElementById('cat-icone-preview').textContent=c.icone||'📋';
+  document.getElementById('cat-tipo').value=c.tipo;
+  document.getElementById('modal-cat-titulo').textContent='Editar categoria';
+  document.getElementById('btn-excluir-cat').style.display='';
+  renderEmojiGrid(c.icone||'📋');
+  abrirModal('modal-cat');
+}
 function excluirCat(){ var id=parseInt(document.getElementById('cat-id').value); if(!confirm('Excluir esta categoria?')) return; S.categorias=S.categorias.filter(c=>c.id!==id); saveData(); fecharModal('modal-cat'); renderCads(); }
 function salvarCat(){ var nome=document.getElementById('cat-nome').value.trim(); if(!nome){alert('Informe o nome');return;} var id=parseInt(document.getElementById('cat-id').value); var obj={id:id||S.nextId++,nome,icone:document.getElementById('cat-icone').value||'📋',tipo:document.getElementById('cat-tipo').value}; if(id){var i=S.categorias.findIndex(x=>x.id===id);if(i>=0)S.categorias[i]=obj;}else S.categorias.push(obj); saveData(); fecharModal('modal-cat'); renderCads(); }
 
@@ -832,14 +879,13 @@ function salvarCartao(){ var nome=document.getElementById('cc-nome').value.trim(
 
 function exportarExcel(){
   if(!S.transacoes.length){alert('Nenhum lançamento para exportar');return;}
-  if(typeof XLSX==='undefined'){alert('Biblioteca XLSX não carregada. Verifique sua conexão e tente novamente.');return;}
 
-  // ---- Expandir parcelas nos meses corretos ----
+  // Expandir parcelas nos meses corretos
   var linhas=[];
   S.transacoes.forEach(function(t){
     if(t.rep==='parcelado'&&t.parcTotal>1&&t.cartaoId){
       var anoI,mesI;
-      if(t.mesFatura){var p=t.mesFatura.split('-');anoI=parseInt(p[0]);mesI=parseInt(p[1])-1;}
+      if(t.mesFatura){var pts=t.mesFatura.split('-');anoI=parseInt(pts[0]);mesI=parseInt(pts[1])-1;}
       else{var d=new Date(t.data+'T12:00:00');anoI=d.getFullYear();mesI=d.getMonth();}
       var total=Math.round(t.valor*t.parcTotal*100)/100;
       var parcBase=Math.floor(total/t.parcTotal*100)/100;
@@ -851,29 +897,38 @@ function exportarExcel(){
       }
     } else {
       var d2=new Date(t.data+'T12:00:00');
-      linhas.push(Object.assign({},t,{_mes:d2.getFullYear()+'-'+(d2.getMonth()+1),_parc:t.rep==='fixo'?('Fixo/'+(t.freq||'')):t.rep==='parcelado'?(t.parcAtual+'/'+t.parcTotal):'-'}));
+      linhas.push(Object.assign({},t,{
+        _mes:d2.getFullYear()+'-'+(d2.getMonth()+1),
+        _parc:t.rep==='fixo'?('Fixo/'+(t.freq||'')):t.rep==='parcelado'?(t.parcAtual+'/'+t.parcTotal):'-'
+      }));
     }
   });
 
-  // ---- Meses únicos ordenados ----
+  // Meses únicos ordenados
   var muSet=new Set(linhas.map(function(l){return l._mes;}));
-  var mu=[...muSet].sort(function(a,b){var p=a.split('-').map(Number),q=b.split('-').map(Number);return p[0]!==q[0]?p[0]-q[0]:p[1]-q[1];});
+  var mu=[...muSet].sort(function(a,b){
+    var p=a.split('-').map(Number),q=b.split('-').map(Number);
+    return p[0]!==q[0]?p[0]-q[0]:p[1]-q[1];
+  });
   var mesLabels=mu.map(function(m){var p=m.split('-');return meses[parseInt(p[1])-1]+'/'+p[0];});
 
-  // ---- Montar dados da planilha ----
-  var wsData=[];
+  // Montar linhas CSV
+  var SEP=';'; // ponto-e-vírgula para Excel Brasil
+  function cell(v){
+    v=String(v===null||v===undefined?'':v);
+    if(v.indexOf(SEP)>=0||v.indexOf('"')>=0||v.indexOf('\n')>=0)
+      return '"'+v.replace(/"/g,'""')+'"';
+    return v;
+  }
+  function numCell(v){ return String(v).replace('.',','); } // vírgula decimal para Excel BR
 
-  // Estilos via SheetJS (apenas disponíveis na versão pro, usamos workaround com !ref)
+  var rows=[];
   // Cabeçalho
-  var head=['Descrição','Tipo','Categoria','Pago com','Parcela','Status',...mesLabels,'Total'];
-  wsData.push(head);
+  rows.push(['Descrição','Tipo','Categoria','Pago com','Parcela','Status',...mesLabels,'Total'].map(cell).join(SEP));
 
   function addSecao(titulo,lista,sinal){
     if(!lista.length) return;
-    // linha de grupo
-    var grpRow=[titulo];for(var i=1;i<head.length;i++)grpRow.push('');
-    wsData.push(grpRow);
-    // agrupar por id+parc
+    rows.push([titulo,...Array(5+mu.length+1).fill('')].map(cell).join(SEP));
     var seen={};var ordered=[];
     lista.forEach(function(l){var k=l.id+'_'+(l._parc||'');if(!seen[k]){seen[k]=[];ordered.push(k);}seen[k].push(l);});
     ordered.forEach(function(k){
@@ -882,57 +937,55 @@ function exportarExcel(){
       var pg=ref.contaId?(S.contas.find(function(c){return c.id===ref.contaId;})||{nome:'?'}).nome:ccNome(ref.cartaoId);
       var st=ref.status==='pago'?'Pago':ref.status==='nao_recebido'?'Não recebido':'Não pago';
       var tipo=ref.tipo==='despesa'?'Despesa':ref.tipo==='receita'?'Receita':'Transferência';
-      var row=[ref.desc,tipo,cat.nome,pg,ref._parc||'-',st];
+      var row=[cell(ref.desc),cell(tipo),cell(cat.nome),cell(pg),cell(ref._parc||'-'),cell(st)];
       var tot=0;
       mu.forEach(function(m){
         var match=items.find(function(l){return l._mes===m;});
-        if(match){var v=Math.round(sinal*match.valor*100)/100;tot+=v;row.push(v);}
+        if(match){var v=Math.round(sinal*match.valor*100)/100;tot+=v;row.push(numCell(v));}
         else row.push('');
       });
-      row.push(Math.round(tot*100)/100);
-      wsData.push(row);
+      row.push(numCell(Math.round(tot*100)/100));
+      rows.push(row.join(SEP));
     });
   }
 
-  addSecao('── DESPESAS ──',linhas.filter(function(l){return l.tipo==='despesa';}),-1);
-  addSecao('── RECEITAS ──',linhas.filter(function(l){return l.tipo==='receita';}),1);
-  addSecao('── TRANSFERÊNCIAS ──',linhas.filter(function(l){return l.tipo==='transferencia';}),0);
+  addSecao('DESPESAS',linhas.filter(function(l){return l.tipo==='despesa';}),-1);
+  addSecao('RECEITAS',linhas.filter(function(l){return l.tipo==='receita';}),1);
+  addSecao('TRANSFERÊNCIAS',linhas.filter(function(l){return l.tipo==='transferencia';}),0);
 
-  // Linha total
-  var totRow=['TOTAL GERAL','','','','',''];
+  // Total geral
+  var totRow=[cell('TOTAL GERAL'),cell(''),cell(''),cell(''),cell(''),cell('')];
   var tg=0;
   mu.forEach(function(m){
-    var soma=linhas.reduce(function(acc,l){return acc+(l._mes===m?(l.tipo==='despesa'?-l.valor:l.tipo==='receita'?l.valor:0):0);},0);
-    soma=Math.round(soma*100)/100;tg+=soma;totRow.push(soma);
+    var soma=linhas.reduce(function(acc,l){
+      return acc+(l._mes===m?(l.tipo==='despesa'?-l.valor:l.tipo==='receita'?l.valor:0):0);
+    },0);
+    soma=Math.round(soma*100)/100;tg+=soma;
+    totRow.push(numCell(soma));
   });
-  totRow.push(Math.round(tg*100)/100);
-  wsData.push(totRow);
+  totRow.push(numCell(Math.round(tg*100)/100));
+  rows.push(totRow.join(SEP));
 
-  // ---- Criar workbook com SheetJS ----
-  var wb=XLSX.utils.book_new();
-  var ws=XLSX.utils.aoa_to_sheet(wsData);
+  var csv='\uFEFF'+rows.join('\r\n');
+  var blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
+  var a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download='controle_financeiro.csv';
+  a.click();
+}
 
-  // Larguras das colunas
-  var wscols=[{wch:30},{wch:12},{wch:18},{wch:16},{wch:10},{wch:14}];
-  mu.forEach(function(){wscols.push({wch:13});});
-  wscols.push({wch:13});
-  ws['!cols']=wscols;
-
-  // Aplicar estilos nas células (SheetJS community suporta via cell.s com xlsx-style, mas usamos formatação numérica)
-  // Formatar células numéricas com 2 casas decimais
-  var range=XLSX.utils.decode_range(ws['!ref']);
-  for(var R=range.s.r;R<=range.e.r;R++){
-    for(var C=6;C<=range.e.c;C++){
-      var addr=XLSX.utils.encode_cell({r:R,c:C});
-      if(ws[addr]&&typeof ws[addr].v==='number'){
-        ws[addr].t='n';
-        ws[addr].z='#,##0.00';
-      }
-    }
-  }
-
-  XLSX.utils.book_append_sheet(wb,ws,'Controle Financeiro');
-  XLSX.writeFile(wb,'controle_financeiro.xlsx');
+// ---- Emoji picker ----
+var EMOJIS=['🛒','🚗','💊','🏠','🎮','🎬','✈️','🍕','🍺','☕','👗','💄','📱','💻','🎓','📚','🏋️','⚽','🎵','🎸','💰','💳','🏦','💵','⭐','🎁','🐶','🐱','🌿','🌊','🔧','🏥','🚌','⛽','🧴','🧹','💡','📋','❤️','🎯','🏆','🎪','🎨','🧩','🍎','🥗','🛍️','👟','🧳','📦'];
+function renderEmojiGrid(sel){
+  var g=document.getElementById('emoji-grid'); if(!g) return;
+  g.innerHTML=EMOJIS.map(function(e){
+    return '<button type="button" class="emoji-opt'+(e===sel?' sel':'')+'" onclick="selecionarEmoji(\''+e+'\')">'+e+'</button>';
+  }).join('');
+}
+function selecionarEmoji(e){
+  document.getElementById('cat-icone').value=e;
+  document.getElementById('cat-icone-preview').textContent=e;
+  renderEmojiGrid(e);
 }
 </script>
 </body>
