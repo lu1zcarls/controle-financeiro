@@ -257,7 +257,7 @@ tr:hover td{background:var(--bg3)}
   </div>
   <div class="fg"><label>Valor (R$)</label><input type="number" id="l-val" placeholder="0,00" min="0" step="0.01" oninput="calcParc()"></div>
   <div class="fg"><label>Descrição</label><input type="text" id="l-desc" placeholder="Ex: Mercado, Salário..."></div>
-  <div class="fg"><label>Categoria</label><select id="l-cat"></select></div>
+  <div class="fg" id="fg-cat"><label>Categoria</label><select id="l-cat"></select></div>
   <div class="fg"><label>Pago com</label><select id="l-conta" onchange="onContaMuda()"></select></div>
   <div class="fg" id="fg-dest" style="display:none"><label>Conta destino</label><select id="l-dest"></select></div>
   <div class="fg"><label>Data</label><input type="date" id="l-data"></div>
@@ -296,6 +296,7 @@ tr:hover td{background:var(--bg3)}
   </div>
   <div style="display:flex;gap:8px;margin-top:1rem">
     <button class="btn" style="flex:1" onclick="fecharModal('modal-lanc')">Cancelar</button>
+    <button class="btn" id="btn-excluir" style="flex:1;color:var(--red);border-color:var(--red);display:none" onclick="excluirLanc()">Excluir</button>
     <button class="btn primary" style="flex:1" onclick="salvarLanc()">Salvar</button>
   </div>
 </div>
@@ -627,8 +628,21 @@ function abrirModal(id){document.getElementById(id).classList.add('open');}
 function fecharModal(id){document.getElementById(id).classList.remove('open');}
 
 function popSelects(){
+  // categorias filtradas por tipo
+  var tipo = S.tipoLanc;
   var cs=document.getElementById('l-cat'); cs.innerHTML='';
-  S.categorias.forEach(c=>{var o=document.createElement('option');o.value=c.id;o.textContent=c.icone+' '+c.nome;cs.appendChild(o);});
+  var cats = S.categorias.filter(c=> tipo==='despesa'?(c.tipo==='despesa'||c.tipo==='ambos'):(c.tipo==='receita'||c.tipo==='ambos'));
+  // separar por grupo
+  var despCats = cats.filter(c=>c.tipo==='despesa');
+  var recCats  = cats.filter(c=>c.tipo==='receita');
+  var ambCats  = cats.filter(c=>c.tipo==='ambos');
+  if(tipo==='despesa'){
+    if(despCats.length){ var g=document.createElement('optgroup'); g.label='— Despesas —'; despCats.forEach(c=>{var o=document.createElement('option');o.value=c.id;o.textContent=c.icone+' '+c.nome;g.appendChild(o);}); cs.appendChild(g); }
+    if(ambCats.length){ var g2=document.createElement('optgroup'); g2.label='— Outros —'; ambCats.forEach(c=>{var o=document.createElement('option');o.value=c.id;o.textContent=c.icone+' '+c.nome;g2.appendChild(o);}); cs.appendChild(g2); }
+  } else {
+    if(recCats.length){ var g3=document.createElement('optgroup'); g3.label='— Receitas —'; recCats.forEach(c=>{var o=document.createElement('option');o.value=c.id;o.textContent=c.icone+' '+c.nome;g3.appendChild(o);}); cs.appendChild(g3); }
+    if(ambCats.length){ var g4=document.createElement('optgroup'); g4.label='— Outros —'; ambCats.forEach(c=>{var o=document.createElement('option');o.value=c.id;o.textContent=c.icone+' '+c.nome;g4.appendChild(o);}); cs.appendChild(g4); }
+  }
   var pg=document.getElementById('l-conta'); pg.innerHTML='';
   S.contas.forEach(c=>{var o=document.createElement('option');o.value='c_'+c.id;o.textContent=(c.tipo==='banco'?'🏦 ':'💵 ')+c.nome;pg.appendChild(o);});
   S.cartoes.forEach(c=>{var o=document.createElement('option');o.value='cc_'+c.id;o.textContent='💳 '+c.nome;pg.appendChild(o);});
@@ -643,14 +657,21 @@ function onContaMuda(){
   document.getElementById('rep-parcelado').style.display=isCC?'':'none';
   document.getElementById('opt-parc').style.display=isCC?'':'none';
   if(!isCC&&S.repTipo==='parcelado') setRep('none');
-  document.getElementById('fg-dest').style.display=S.tipoLanc==='transferencia'?'':'none';
+  var isTransf=S.tipoLanc==='transferencia';
+  document.getElementById('fg-dest').style.display=isTransf?'':'none';
 }
 
 function setTipo(t){
   S.tipoLanc=t;
   ['despesa','receita','transferencia'].forEach(x=>document.getElementById('tipo-'+x).classList.toggle('active',x===t));
-  document.getElementById('fg-rep').style.display=t==='transferencia'?'none':'';
-  onContaMuda(); calcParc();
+  var isTransf=t==='transferencia';
+  document.getElementById('fg-rep').style.display=isTransf?'none':'';
+  document.getElementById('fg-cat').style.display=isTransf?'none':'';
+  // status padrão por tipo
+  var stEl=document.getElementById('l-status');
+  if(t==='receita') stEl.value='nao_recebido';
+  else stEl.value='nao_pago';
+  popSelects(); calcParc();
 }
 
 function setRep(r){
@@ -667,13 +688,19 @@ function calcParc(){
   if(S.repTipo==='parcelado'){
     var n=parseInt(document.getElementById('rep-nparc').value)||2;
     var v=parseFloat(document.getElementById('l-val').value)||0;
-    info.textContent=v>0&&n>0?(n+'x de R$ '+fmt(v/n)):'';
+    if(v>0&&n>0){
+      var parc=Math.floor(v/n*100)/100;
+      var resto=Math.round((v - parc*n)*100)/100;
+      var p1=Math.round((parc+resto)*100)/100;
+      info.textContent=n+'x — 1ª parcela R$ '+fmt(p1)+', demais R$ '+fmt(parc);
+    } else info.textContent='';
   } else info.textContent='';
 }
 
 function abrirModalLanc(){
   editId=null;
   document.getElementById('ml-title').textContent='Novo lançamento';
+  document.getElementById('btn-excluir').style.display='none';
   S.tipoLanc='despesa'; S.repTipo='none';
   setTipo('despesa'); setRep('none');
   document.getElementById('l-val').value='';
@@ -687,16 +714,28 @@ function editarLanc(id){
   var t=S.transacoes.find(x=>x.id===id); if(!t) return;
   editId=id;
   document.getElementById('ml-title').textContent='Editar lançamento';
-  popSelects(); setTipo(t.tipo); setRep(t.rep||'none');
+  document.getElementById('btn-excluir').style.display='';
+  S.tipoLanc=t.tipo; S.repTipo=t.rep||'none';
+  setTipo(t.tipo); setRep(t.rep||'none');
   document.getElementById('l-val').value=t.valor;
   document.getElementById('l-desc').value=t.desc;
-  document.getElementById('l-cat').value=t.catId;
-  document.getElementById('l-conta').value=t.contaId?'c_'+t.contaId:'cc_'+t.cartaoId;
   document.getElementById('l-data').value=t.data;
   document.getElementById('l-status').value=t.status;
+  // setar categoria após popSelects (já chamado em setTipo)
+  if(t.catId) document.getElementById('l-cat').value=t.catId;
+  document.getElementById('l-conta').value=t.contaId?'c_'+t.contaId:'cc_'+t.cartaoId;
   if(t.rep==='fixo'&&t.freq) document.getElementById('rep-freq').value=t.freq;
   if(t.rep==='parcelado'&&t.parcTotal){document.getElementById('rep-freq').value='parcelas';document.getElementById('rep-nparc').value=t.parcTotal;}
   onContaMuda(); calcParc(); abrirModal('modal-lanc');
+}
+
+function excluirLanc(){
+  if(!editId) return;
+  if(!confirm('Excluir este lançamento?')) return;
+  S.transacoes=S.transacoes.filter(x=>x.id!==editId);
+  saveData(); fecharModal('modal-lanc');
+  var ap=document.querySelector('.page.active');
+  if(ap) renderPage(ap.id.replace('page-',''));
 }
 
 function salvarLanc(){
@@ -704,7 +743,8 @@ function salvarLanc(){
   var desc=document.getElementById('l-desc').value.trim();
   if(!val||val<=0){alert('Informe um valor válido');return;}
   if(!desc){alert('Informe a descrição');return;}
-  var catId=parseInt(document.getElementById('l-cat').value);
+  var isTransf=S.tipoLanc==='transferencia';
+  var catId=isTransf?null:parseInt(document.getElementById('l-cat').value);
   var cv=document.getElementById('l-conta').value;
   var contaId=null,cartaoId=null;
   if(cv.startsWith('c_')) contaId=parseInt(cv.replace('c_',''));
@@ -713,7 +753,14 @@ function salvarLanc(){
   var status=document.getElementById('l-status').value;
   var rep=S.repTipo,freq=null,parcAtual=null,parcTotal=null;
   if(rep==='fixo') freq=document.getElementById('rep-freq').value;
-  if(rep==='parcelado'){parcAtual=1;parcTotal=parseInt(document.getElementById('rep-nparc').value)||2;}
+  if(rep==='parcelado'){
+    parcAtual=editId?(S.transacoes.find(x=>x.id===editId)||{}).parcAtual||1:1;
+    parcTotal=parseInt(document.getElementById('rep-nparc').value)||2;
+    // dividir valor: parcela base arredondada para baixo, arredondamento vai na 1ª
+    var parcBase=Math.floor(val/parcTotal*100)/100;
+    var resto=Math.round((val-parcBase*parcTotal)*100)/100;
+    val=parcAtual===1?Math.round((parcBase+resto)*100)/100:parcBase;
+  }
   var obj={id:editId||S.nextId++,tipo:S.tipoLanc,valor:val,desc,catId,contaId,cartaoId,data,status,rep,freq,parcAtual,parcTotal};
   if(editId){var i=S.transacoes.findIndex(x=>x.id===editId);if(i>=0)S.transacoes[i]=obj;}
   else S.transacoes.push(obj);
@@ -745,18 +792,38 @@ function salvarCartao(){
 
 function exportarExcel(){
   var tx=S.transacoes; if(!tx.length){alert('Nenhum lançamento para exportar');return;}
+  // ordenar por data
+  tx=tx.slice().sort((a,b)=>new Date(a.data)-new Date(b.data));
   var mu=[...new Set(tx.map(t=>{var d=new Date(t.data+'T12:00:00');return d.getFullYear()+'-'+(d.getMonth()+1);}))].sort();
-  var head=['Descrição','Valor','Tipo','Pago com','Parcelas','Categoria',...mu.map(m=>{var[a,ms]=m.split('-');return meses[parseInt(ms)-1]+'/'+a;}),'Total'];
+  var mesLabels=mu.map(m=>{var[a,ms]=m.split('-');return meses[parseInt(ms)-1]+'/'+a;});
+  // cabeçalho
+  var head=['Descrição','Tipo','Categoria','Pago com','Parcelas','Status',...mesLabels,'Total'];
   var rows=[head];
+  // linha por transação
   tx.forEach(t=>{
-    var cat=S.categorias.find(c=>c.id===t.catId)||{nome:'Outros'};
+    var cat=S.categorias.find(c=>c.id===t.catId)||{nome:'-'};
     var pg=t.contaId?(S.contas.find(c=>c.id===t.contaId)||{nome:'?'}).nome:ccNome(t.cartaoId);
-    var parc=t.rep==='parcelado'?(t.parcAtual+'/'+t.parcTotal):'-';
+    var parc=t.rep==='parcelado'?(t.parcAtual+'/'+t.parcTotal):t.rep==='fixo'?('Fixo/'+t.freq):'-';
+    var stLabel=t.status==='pago'?'Pago':t.status==='nao_recebido'?'Não recebido':'Não pago';
     var sn=t.tipo==='despesa'?-1:1;
-    var row=[t.desc,(sn*t.valor).toFixed(2),t.tipo,pg,parc,cat.nome];
-    mu.forEach(m=>{var[a,ms]=m.split('-');var d=new Date(t.data+'T12:00:00');row.push(d.getFullYear()===parseInt(a)&&d.getMonth()===parseInt(ms)-1?(sn*t.valor).toFixed(2):'-');});
-    row.push((sn*t.valor).toFixed(2)); rows.push(row);
+    var row=[t.desc,t.tipo==='despesa'?'Despesa':t.tipo==='receita'?'Receita':'Transferência',cat.nome,pg,parc,stLabel];
+    mu.forEach(m=>{var[a,ms]=m.split('-');var d=new Date(t.data+'T12:00:00');row.push(d.getFullYear()===parseInt(a)&&d.getMonth()===parseInt(ms)-1?(sn*t.valor).toFixed(2):'');});
+    row.push((sn*t.valor).toFixed(2));
+    rows.push(row);
   });
+  // linha de totais
+  var totRow=['TOTAL','','','','',''];
+  mu.forEach((m,i)=>{
+    var soma=tx.reduce((acc,t)=>{
+      var d=new Date(t.data+'T12:00:00');var[a,ms]=m.split('-');
+      if(d.getFullYear()===parseInt(a)&&d.getMonth()===parseInt(ms)-1) return acc+(t.tipo==='despesa'?-t.valor:t.tipo==='receita'?t.valor:0);
+      return acc;
+    },0);
+    totRow.push(soma.toFixed(2));
+  });
+  var totalGeral=tx.reduce((acc,t)=>acc+(t.tipo==='despesa'?-t.valor:t.tipo==='receita'?t.valor:0),0);
+  totRow.push(totalGeral.toFixed(2));
+  rows.push(totRow);
   var csv='\uFEFF'+rows.map(r=>r.map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(',')).join('\n');
   var a=document.createElement('a');
   a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8;'}));
