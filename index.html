@@ -880,22 +880,37 @@ function renderFatura(){
 
 function pagarFatura(ccId){
   var cc=S.cartoes.find(function(c){return c.id===ccId;}); if(!cc) return;
-  var txs=S.transacoes.filter(function(t){return t.cartaoId===ccId&&t.status!=='pago';});
+  // Filtrar APENAS as parcelas do mês/ano da fatura aberta
+  var txs=S.transacoes.filter(function(t){
+    if(t.cartaoId!==ccId||t.status==='pago') return false;
+    return txMesFatura(t,cc)===_fatAno+'-'+_fatMes;
+  });
   var total=Math.round(txs.reduce(function(a,b){return a+b.valor;},0)*100)/100;
   if(!total){alert('Fatura já paga!');return;}
+
+  var mesFatLabel=meses[_fatMes]+' '+_fatAno;
   var opts=S.contas.map(function(c){
     return '<option value="'+c.id+'">'+(c.tipo==='banco'?'🏦':'💵')+' '+c.nome+' (R$ '+fmt(c.saldo)+')</option>';
   }).join('');
+
   var div=document.createElement('div');
   div.id='modal-pagar-fatura';
   div.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:500;display:flex;align-items:center;justify-content:center;padding:1rem';
-  div.innerHTML='<div style="background:var(--bg2);border-radius:var(--radius);padding:1.25rem;width:100%;max-width:360px">'
-    +'<h2 style="font-size:15px;font-weight:600;margin-bottom:.75rem;color:var(--text)">Pagar fatura</h2>'
-    +'<p style="font-size:13px;color:var(--text2);margin-bottom:.75rem">Valor: <strong style="color:var(--red)">R$ '+fmt(total)+'</strong></p>'
-    +'<div class="fg"><label>Débitar da conta</label><select id="pagar-conta-sel" style="width:100%;padding:9px;border-radius:var(--radius-sm);border:0.5px solid var(--border2);background:var(--bg3);color:var(--text);font-size:13px">'+opts+'</select></div>'
+  div.innerHTML=''
+    +'<div style="background:var(--bg2);border-radius:var(--radius);padding:1.25rem;width:100%;max-width:360px">'
+    +'<h2 style="font-size:15px;font-weight:600;margin-bottom:.25rem;color:var(--text)">Pagar fatura</h2>'
+    +'<p style="font-size:12px;color:var(--text2);margin-bottom:.75rem">Fatura de '+mesFatLabel+'</p>'
+    +'<div style="background:var(--bg3);border-radius:var(--radius-sm);padding:.75rem;margin-bottom:.75rem;display:flex;justify-content:space-between;align-items:center">'
+    +'<span style="font-size:13px;color:var(--text2)">Total da fatura</span>'
+    +'<span style="font-size:18px;font-weight:700;color:var(--red)">R$ '+fmt(total)+'</span>'
+    +'</div>'
+    +'<div class="fg" style="margin-bottom:.65rem"><label style="font-size:11px;color:var(--text2);font-weight:500;display:block;margin-bottom:3px">Débitar da conta</label>'
+    +'<select id="pagar-conta-sel" style="width:100%;padding:9px 10px;border-radius:var(--radius-sm);border:0.5px solid var(--border2);background:var(--bg3);color:var(--text);font-size:13px;font-family:inherit">'+opts+'</select></div>'
+    +'<div class="fg" style="margin-bottom:.65rem"><label style="font-size:11px;color:var(--text2);font-weight:500;display:block;margin-bottom:3px">Data do pagamento</label>'
+    +'<input type="date" id="pagar-data" value="'+dataHoje()+'" style="width:100%;padding:9px 10px;border-radius:var(--radius-sm);border:0.5px solid var(--border2);background:var(--bg3);color:var(--text);font-size:13px;font-family:inherit"></div>'
     +'<div style="display:flex;gap:8px;margin-top:1rem">'
     +'<button class="btn" style="flex:1" onclick="fecharModalPagar()">Cancelar</button>'
-    +'<button class="btn primary" style="flex:1" onclick="confirmarPagFatura('+ccId+','+total+',this)">Confirmar</button>'
+    +'<button class="btn primary" style="flex:1" onclick="confirmarPagFatura('+ccId+','+total+')">Confirmar</button>'
     +'</div></div>';
   document.body.appendChild(div);
 }
@@ -905,13 +920,23 @@ function fecharModalPagar(){
   if(el) el.remove();
 }
 
-function confirmarPagFatura(ccId,total,btn){
+function confirmarPagFatura(ccId,total){
   var sel=document.getElementById('pagar-conta-sel');
+  var dataSel=document.getElementById('pagar-data');
   var contaId=parseInt(sel.value);
+  var dataPag=dataSel?dataSel.value:dataHoje();
   var conta=S.contas.find(function(c){return c.id===contaId;});
   if(!conta){alert('Selecione uma conta');return;}
-  var txs=S.transacoes.filter(function(t){return t.cartaoId===ccId&&t.status!=='pago';});
-  txs.forEach(function(t){t.status='pago';});
+  // Marcar apenas parcelas do mês da fatura como pagas
+  var cc=S.cartoes.find(function(c){return c.id===ccId;});
+  var txs=S.transacoes.filter(function(t){
+    if(t.cartaoId!==ccId||t.status==='pago') return false;
+    return txMesFatura(t,cc)===_fatAno+'-'+_fatMes;
+  });
+  txs.forEach(function(t){
+    t.status='pago';
+    t.dataPagamento=dataPag;
+  });
   conta.saldo=Math.round((conta.saldo-total)*100)/100;
   saveData();
   fecharModalPagar();
