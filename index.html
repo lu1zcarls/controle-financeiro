@@ -356,7 +356,7 @@ tr:hover td{background:var(--bg3)}
       </div>
     </div>
   </div>
-  <div class="fg"><label>Status</label>
+  <div class="fg" id="fg-status"><label>Status</label>
     <select id="l-status">
       <option value="nao_pago">Não pago</option>
       <option value="pago">Pago</option>
@@ -915,19 +915,22 @@ function onContaMuda(){
   if(!isCC&&S.repTipo==='parcelado') setRep('none');
 
   // Conta destino (transferência)
-  document.getElementById('fg-dest').style.display=isTransf?'':'none';
+  var elDest=document.getElementById('fg-dest');
+  if(elDest) elDest.style.display=isTransf?'':'none';
+
+  // Status: ocultar para cartão (status é gerenciado pelo pagamento da fatura)
+  var elStatus=document.getElementById('fg-status');
+  if(elStatus) elStatus.style.display=isCC?'none':'';
 
   // Select inline de mês da fatura
   var mfSel=document.getElementById('l-mes-fatura');
   if(!mfSel) return;
   if(isCC&&!isTransf){
     mfSel.style.display='';
-    // Só repopula se estiver vazio ou mudou de cartão
     mfSel.innerHTML='';
     var hoje=new Date();
-    // meses: mês anterior, atual e próximos 6
     for(var i=-1;i<=6;i++){
-      var d=new Date(hoje.getFullYear(), hoje.getMonth()+i, 1);
+      var d=new Date(hoje.getFullYear(),hoje.getMonth()+i,1);
       var o=document.createElement('option');
       o.value=d.getFullYear()+'-'+(d.getMonth()+1);
       o.textContent='Fatura de '+meses[d.getMonth()];
@@ -1019,6 +1022,9 @@ function editarLanc(id){
     document.getElementById('l-desc').value=t.desc||'';
     document.getElementById('l-data').value=t.data||new Date().toISOString().split('T')[0];
     document.getElementById('l-status').value=t.status||'nao_pago';
+    // ocultar status se for cartão
+    var esSt=document.getElementById('fg-status');
+    if(esSt) esSt.style.display=t.cartaoId?'none':'';
     // categoria
     if(t.catId!=null){
       var cs=document.getElementById('l-cat');
@@ -1099,36 +1105,79 @@ function salvarLanc(){
       var rfEl=document.getElementById('rep-freq');
       freq=rfEl?rfEl.value:'mensal';
     }
-    if(rep==='parcelado'){
-      parcAtual=editId?(S.transacoes.find(function(x){return x.id===editId;})||{}).parcAtual||1:1;
+    if(rep==='parcelado'&&cartaoId&&!editId){
+      // Criar uma transação separada por parcela, cada uma no mês correto
       var rpEl=document.getElementById('rep-nparc');
       parcTotal=rpEl?parseInt(rpEl.value)||2:2;
       var parcBase=Math.floor(val/parcTotal*100)/100;
       var resto=Math.round((val-parcBase*parcTotal)*100)/100;
-      val=parcAtual===1?Math.round((parcBase+resto)*100)/100:parcBase;
-    }
-    var obj={
-      id:editId||S.nextId++,
-      tipo:S.tipoLanc,
-      valor:val,
-      desc:desc,
-      catId:catId,
-      contaId:contaId,
-      cartaoId:cartaoId,
-      data:data,
-      status:status,
-      rep:rep,
-      freq:freq,
-      parcAtual:parcAtual,
-      parcTotal:parcTotal,
-      mesFatura:mesFatura
-    };
-    if(editId){
-      var idx=S.transacoes.findIndex(x=>x.id===editId);
-      if(idx>=0) S.transacoes[idx]=obj;
-      else S.transacoes.push(obj);
+      // mês inicial da fatura
+      var anoI,mesI;
+      if(mesFatura){
+        var pts=mesFatura.split('-');
+        anoI=parseInt(pts[0]); mesI=parseInt(pts[1])-1;
+      } else {
+        var dh=new Date(); anoI=dh.getFullYear(); mesI=dh.getMonth();
+      }
+      for(var p=0;p<parcTotal;p++){
+        var mm=mesI+p;
+        var aa=anoI+Math.floor(mm/12);
+        mm=mm%12;
+        var vp=p===0?Math.round((parcBase+resto)*100)/100:parcBase;
+        var mfP=aa+'-'+(mm+1);
+        S.transacoes.push({
+          id:S.nextId++,
+          tipo:S.tipoLanc,
+          valor:vp,
+          desc:desc,
+          catId:catId,
+          contaId:null,
+          cartaoId:cartaoId,
+          data:data,
+          status:'nao_pago',
+          rep:'parcelado',
+          freq:null,
+          parcAtual:p+1,
+          parcTotal:parcTotal,
+          mesFatura:mfP
+        });
+      }
     } else {
-      S.transacoes.push(obj);
+      // Lançamento único (conta, transferência, fixo, ou edição)
+      if(rep==='parcelado'&&editId){
+        // edição de parcela individual — manter estrutura
+        var rpEl2=document.getElementById('rep-nparc');
+        parcTotal=rpEl2?parseInt(rpEl2.value)||2:2;
+        parcAtual=(S.transacoes.find(function(x){return x.id===editId;})||{}).parcAtual||1;
+        var parcBase2=Math.floor(val/parcTotal*100)/100;
+        var resto2=Math.round((val-parcBase2*parcTotal)*100)/100;
+        val=parcAtual===1?Math.round((parcBase2+resto2)*100)/100:parcBase2;
+      }
+      // Status: cartão sempre nao_pago (gerenciado pela fatura)
+      if(cartaoId) status='nao_pago';
+      var obj={
+        id:editId||S.nextId++,
+        tipo:S.tipoLanc,
+        valor:val,
+        desc:desc,
+        catId:catId,
+        contaId:contaId,
+        cartaoId:cartaoId,
+        data:data,
+        status:status,
+        rep:rep,
+        freq:freq,
+        parcAtual:parcAtual,
+        parcTotal:parcTotal,
+        mesFatura:mesFatura
+      };
+      if(editId){
+        var idx=S.transacoes.findIndex(function(x){return x.id===editId;});
+        if(idx>=0) S.transacoes[idx]=obj;
+        else S.transacoes.push(obj);
+      } else {
+        S.transacoes.push(obj);
+      }
     }
     saveData();
     fecharModal('modal-lanc');
