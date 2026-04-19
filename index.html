@@ -1334,9 +1334,15 @@ function excluirLanc(){
   if(!editId) return;
   if(!confirm('Excluir este lançamento?')) return;
   S.transacoes=S.transacoes.filter(x=>x.id!==editId);
-  saveData(); fecharModal('modal-lanc');
+  saveData();
+  fecharModal('modal-lanc');
+  // Sempre atualizar dashboard (saldos e cards) independente da aba ativa
+  renderDash();
   var ap=document.querySelector('.page.active');
-  if(ap) renderPage(ap.id.replace('page-',''));
+  if(ap){
+    var pg=ap.id.replace('page-','');
+    if(pg!=='dashboard') renderPage(pg);
+  }
 }
 
 function salvarLanc(){
@@ -1451,8 +1457,13 @@ function salvarLanc(){
     }
     saveData();
     fecharModal('modal-lanc');
+    // Sempre atualizar dashboard (saldos e cards) independente da aba ativa
+    renderDash();
     var ap=document.querySelector('.page.active');
-    if(ap) renderPage(ap.id.replace('page-',''));
+    if(ap){
+      var pg=ap.id.replace('page-','');
+      if(pg!=='dashboard') renderPage(pg);
+    }
   } catch(e){ console.error('salvarLanc:',e); alert('Erro ao salvar: '+e.message); }
 }
 
