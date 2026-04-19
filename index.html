@@ -607,15 +607,28 @@ function saldoConta(contaId, ateAno, ateMes){
   var conta=S.contas.find(function(c){return c.id===contaId;});
   if(!conta) return 0;
   var base=conta.saldo; // saldo inicial cadastrado
-  // somar todas transações pagas da conta até o mês selecionado
   var ajuste=S.transacoes.filter(function(t){
-    if(t.contaId!==contaId||t.status!=='pago') return false;
+    // transações da própria conta pagas
+    if(t.status!=='pago') return false;
     var d=new Date(t.data+'T12:00:00');
-    if(d.getFullYear()>ateAno) return false;
-    if(d.getFullYear()===ateAno&&d.getMonth()>ateMes) return false;
-    return true;
+    // para fatura de cartão, usar dataPagamento
+    var dRef=t.dataPagamento?new Date(t.dataPagamento+'T12:00:00'):d;
+    if(dRef.getFullYear()>ateAno) return false;
+    if(dRef.getFullYear()===ateAno&&dRef.getMonth()>ateMes) return false;
+    // receita/despesa normal desta conta
+    if(t.contaId===contaId) return true;
+    // transferência onde esta conta é destino
+    if(t.tipo==='transferencia'&&t.contaDestId===contaId) return true;
+    return false;
   }).reduce(function(acc,t){
-    return acc+(t.tipo==='receita'?t.valor:(t.tipo==='despesa'?-t.valor:0));
+    if(t.tipo==='receita') return acc+t.valor;
+    if(t.tipo==='despesa') return acc-t.valor;
+    if(t.tipo==='transferencia'){
+      // saída da conta origem, entrada na conta destino
+      if(t.contaId===contaId) return acc-t.valor;
+      if(t.contaDestId===contaId) return acc+t.valor;
+    }
+    return acc;
   },0);
   return Math.round((base+ajuste)*100)/100;
 }
@@ -689,8 +702,15 @@ function renderDash(){
       var d=new Date(t.data+'T12:00:00');
       return d.getMonth()===S.mesAtual&&d.getFullYear()===S.anoAtual;
     });
+    // Saídas pagas incluem pagamentos de fatura de cartão
+    var txFatPagas=S.transacoes.filter(function(t){
+      if(!t._faturaCartao||t.status!=='pago') return false;
+      var d=new Date(t.data+'T12:00:00');
+      return d.getMonth()===S.mesAtual&&d.getFullYear()===S.anoAtual;
+    });
     var ent=txMes.filter(function(t){return t.tipo==='receita'&&t.status==='pago';}).reduce(function(a,b){return a+b.valor;},0);
-    var sai=txMes.filter(function(t){return t.tipo==='despesa'&&t.status==='pago';}).reduce(function(a,b){return a+b.valor;},0);
+    var sai=txMes.filter(function(t){return t.tipo==='despesa'&&t.status==='pago'&&!t._faturaCartao;}).reduce(function(a,b){return a+b.valor;},0)
+             +txFatPagas.reduce(function(a,b){return a+b.valor;},0);
     var entPrev=txMes.filter(function(t){return t.tipo==='receita'&&t.status!=='pago';}).reduce(function(a,b){return a+b.valor;},0);
     var saiPrev=txMes.filter(function(t){return t.tipo==='despesa'&&t.status!=='pago';}).reduce(function(a,b){return a+b.valor;},0);
     h+='<div class="grid3">';
@@ -715,9 +735,10 @@ function renderTxList(txs,elId,grp,mesRef,anoRef){
   var el=document.getElementById(elId); if(!el) return;
   if(!txs.length){el.innerHTML='<div class="empty">Nenhum lançamento</div>';return;}
 
-  // Separar normais e agrupar cartões por ccId
+  // Separar normais e agrupar cartões por ccId (ignorar _faturaCartao)
   var faturas={}, normais=[];
   txs.forEach(function(t){
+    if(t._faturaCartao) return; // lançamento interno de pagamento, não exibir
     if(t.cartaoId){
       var k='cc_'+t.cartaoId;
       if(!faturas[k]) faturas[k]={ccId:t.cartaoId,txs:[]};
@@ -780,8 +801,8 @@ function renderTxList(txs,elId,grp,mesRef,anoRef){
       } else {
         var cat=S.categorias.find(function(c){return c.id===t.catId;})||{icone:'📋',nome:'Outros'};
         var pg=t.contaId?(S.contas.find(function(c){return c.id===t.contaId;})||{nome:'?'}).nome:ccNome(t.cartaoId);
-        var sn=t.tipo==='despesa'?'-':(t.tipo==='receita'?'+':'');
-        var cor=t.tipo==='despesa'?'red':(t.tipo==='receita'?'green':'');
+        var sn=t.tipo==='despesa'?'-':(t.tipo==='receita'?'+':'⇄ ');
+        var cor=t.tipo==='despesa'?'red':(t.tipo==='receita'?'green':'amber');
         var st=t.status==='pago'?'<span class="badge pago">pago</span>'
           :(t.status==='nao_recebido'?'<span class="badge nrec">não recebido</span>'
           :'<span class="badge npago">não pago</span>');
@@ -811,6 +832,7 @@ function renderLancs(){
   var el=document.getElementById('mes-label-lanc');
   if(el) el.textContent=meses[S.mesLanc]+' '+S.anoLanc;
   var tx=S.transacoes.filter(function(t){
+    if(t._faturaCartao) return false;
     if(t.cartaoId){
       var cc=S.cartoes.find(function(c){return c.id===t.cartaoId;});
       if(!cc) return false;
@@ -972,8 +994,15 @@ function confirmarReabrirFatura(ccId,total){
     if(t.cartaoId!==ccId||t.status!=='pago') return false;
     return txMesFatura(t,cc)===_fatAno+'-'+_fatMes;
   });
-  txs.forEach(function(t){t.status='nao_pago';delete t.dataPagamento;});
-  conta.saldo=Math.round((conta.saldo+total)*100)/100;
+  txs.forEach(function(t){t.status='nao_pago';delete t.dataPagamento;delete t.contaPagId;});
+  // Remover lançamento de pagamento da fatura criado em confirmarPagFatura
+  S.transacoes=S.transacoes.filter(function(t){
+    if(!t._faturaCartao) return true;
+    if(t.contaId!==contaId) return true;
+    // remover o lançamento de pagamento desta fatura
+    var mesFatStr=meses[_fatMes]+'/'+_fatAno;
+    return t.desc.indexOf(cc.nome)<0||t.desc.indexOf(mesFatStr)<0;
+  });
   saveData();
   fecharModalReabrir();
   renderFatura();
@@ -1029,8 +1058,8 @@ function confirmarPagFatura(ccId,total){
   var dataPag=dataSel?dataSel.value:dataHoje();
   var conta=S.contas.find(function(c){return c.id===contaId;});
   if(!conta){alert('Selecione uma conta');return;}
-  // Marcar apenas parcelas do mês da fatura como pagas
   var cc=S.cartoes.find(function(c){return c.id===ccId;});
+  // Marcar parcelas do mês como pagas
   var txs=S.transacoes.filter(function(t){
     if(t.cartaoId!==ccId||t.status==='pago') return false;
     return txMesFatura(t,cc)===_fatAno+'-'+_fatMes;
@@ -1038,8 +1067,28 @@ function confirmarPagFatura(ccId,total){
   txs.forEach(function(t){
     t.status='pago';
     t.dataPagamento=dataPag;
+    t.contaPagId=contaId; // registrar qual conta pagou
   });
-  conta.saldo=Math.round((conta.saldo-total)*100)/100;
+  // Criar lançamento de despesa paga na conta para refletir no saldoConta
+  S.transacoes.push({
+    id:S.nextId++,
+    tipo:'despesa',
+    valor:total,
+    desc:'Pagamento fatura '+cc.nome+' '+meses[_fatMes]+'/'+_fatAno,
+    catId:null,
+    contaId:contaId,
+    cartaoId:null,
+    contaDestId:null,
+    data:dataPag,
+    status:'pago',
+    dataPagamento:dataPag,
+    rep:'none',
+    freq:null,
+    parcAtual:null,
+    parcTotal:null,
+    mesFatura:null,
+    _faturaCartao:true // flag para não exibir como lançamento normal
+  });
   saveData();
   fecharModalPagar();
   renderFatura();
@@ -1363,8 +1412,15 @@ function salvarLanc(){
         var resto2=Math.round((val-parcBase2*parcTotal)*100)/100;
         val=parcAtual===1?Math.round((parcBase2+resto2)*100)/100:parcBase2;
       }
-      // Status: cartão sempre nao_pago (gerenciado pela fatura)
+      // Status: cartão sempre nao_pago; transferência sempre pago
       if(cartaoId) status='nao_pago';
+      if(isTransf) status='pago';
+      // Conta destino (transferência)
+      var contaDestId=null;
+      if(isTransf){
+        var destEl=document.getElementById('l-dest');
+        if(destEl&&destEl.value) contaDestId=parseInt(destEl.value.replace('c_',''));
+      }
       var obj={
         id:editId||S.nextId++,
         tipo:S.tipoLanc,
@@ -1373,6 +1429,7 @@ function salvarLanc(){
         catId:catId,
         contaId:contaId,
         cartaoId:cartaoId,
+        contaDestId:contaDestId||null,
         data:data,
         status:status,
         rep:rep,
