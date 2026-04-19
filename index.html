@@ -696,20 +696,23 @@ function renderDash(){
       });
       h+='</div>';
     }
-    // ── Resumo do mês ──
+    // ── Resumo do mês — apenas movimentações do mês selecionado ──
+    // Transações normais (não cartão, não pagamento interno de fatura) do mês
     var txMes=S.transacoes.filter(function(t){
-      if(t.cartaoId) return false; // cartão não entra no resumo mensal de conta
+      if(t.cartaoId) return false;
+      if(t._faturaCartao) return false;
       var d=new Date(t.data+'T12:00:00');
       return d.getMonth()===S.mesAtual&&d.getFullYear()===S.anoAtual;
     });
-    // Saídas pagas incluem pagamentos de fatura de cartão
+    // Pagamentos de fatura de cartão realizados no mês selecionado
+    // Usa dataPagamento (data em que foi pago) não data do lançamento
     var txFatPagas=S.transacoes.filter(function(t){
       if(!t._faturaCartao||t.status!=='pago') return false;
-      var d=new Date(t.data+'T12:00:00');
-      return d.getMonth()===S.mesAtual&&d.getFullYear()===S.anoAtual;
+      var dPag=t.dataPagamento?new Date(t.dataPagamento+'T12:00:00'):new Date(t.data+'T12:00:00');
+      return dPag.getMonth()===S.mesAtual&&dPag.getFullYear()===S.anoAtual;
     });
     var ent=txMes.filter(function(t){return t.tipo==='receita'&&t.status==='pago';}).reduce(function(a,b){return a+b.valor;},0);
-    var sai=txMes.filter(function(t){return t.tipo==='despesa'&&t.status==='pago'&&!t._faturaCartao;}).reduce(function(a,b){return a+b.valor;},0)
+    var sai=txMes.filter(function(t){return t.tipo==='despesa'&&t.status==='pago';}).reduce(function(a,b){return a+b.valor;},0)
              +txFatPagas.reduce(function(a,b){return a+b.valor;},0);
     var entPrev=txMes.filter(function(t){return t.tipo==='receita'&&t.status!=='pago';}).reduce(function(a,b){return a+b.valor;},0);
     var saiPrev=txMes.filter(function(t){return t.tipo==='despesa'&&t.status!=='pago';}).reduce(function(a,b){return a+b.valor;},0);
