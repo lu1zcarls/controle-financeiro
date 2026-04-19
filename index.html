@@ -602,6 +602,33 @@ function dataHoje(){
 }
 function ccNome(id){ var c=S.cartoes.find(x=>x.id===id); return c?c.nome:'?'; }
 
+// Calcula o saldo atual de uma conta baseado nas transações pagas até o mês/ano
+function saldoConta(contaId, ateAno, ateMes){
+  var conta=S.contas.find(function(c){return c.id===contaId;});
+  if(!conta) return 0;
+  var base=conta.saldo; // saldo inicial cadastrado
+  // somar todas transações pagas da conta até o mês selecionado
+  var ajuste=S.transacoes.filter(function(t){
+    if(t.contaId!==contaId||t.status!=='pago') return false;
+    var d=new Date(t.data+'T12:00:00');
+    if(d.getFullYear()>ateAno) return false;
+    if(d.getFullYear()===ateAno&&d.getMonth()>ateMes) return false;
+    return true;
+  }).reduce(function(acc,t){
+    return acc+(t.tipo==='receita'?t.valor:(t.tipo==='despesa'?-t.valor:0));
+  },0);
+  return Math.round((base+ajuste)*100)/100;
+}
+
+// Saldo disponível do cartão = limite - total de compras não pagas (todas as faturas em aberto)
+function saldoDispCartao(ccId){
+  var cc=S.cartoes.find(function(c){return c.id===ccId;}); if(!cc) return 0;
+  var totalEmAberto=S.transacoes.filter(function(t){
+    return t.cartaoId===ccId&&t.status!=='pago';
+  }).reduce(function(a,b){return a+b.valor;},0);
+  return Math.round((cc.limite-totalEmAberto)*100)/100;
+}
+
 function toggleSaldos(){ S.saldosVis=!S.saldosVis; saveData(); document.getElementById('btn-hide').textContent=S.saldosVis?'Ocultar':'Exibir'; renderDash(); }
 function mudaMes(d){ S.mesAtual+=d; if(S.mesAtual>11){S.mesAtual=0;S.anoAtual++;} if(S.mesAtual<0){S.mesAtual=11;S.anoAtual--;} saveData(); renderDash(); }
 
@@ -632,25 +659,44 @@ function renderDash(){
   var sa=document.getElementById('saldo-area');
   if(!S.saldosVis){ sa.innerHTML='<p style="font-size:12px;color:var(--text3);padding:.5rem 0">Saldos ocultos</p>'; }
   else {
-    var h='<div class="grid2" style="margin-bottom:10px">';
-    S.contas.forEach(c=>{ h+='<div class="metric"><div class="lbl">'+(c.tipo==='banco'?'🏦 ':'💵 ')+c.nome+'</div><div class="val green">R$ '+fmt(c.saldo)+'</div></div>'; });
+    var h='';
+    // ── Saldos das contas (dinâmicos até o mês selecionado) ──
+    h+='<div class="grid2" style="margin-bottom:10px">';
+    var saldoRealTotal=0;
+    S.contas.forEach(function(c){
+      var sd=saldoConta(c.id,S.anoAtual,S.mesAtual);
+      saldoRealTotal=Math.round((saldoRealTotal+sd)*100)/100;
+      h+='<div class="metric"><div class="lbl">'+(c.tipo==='banco'?'🏦 ':'💵 ')+c.nome+'</div>'
+        +'<div class="val '+(sd>=0?'green':'red')+'">R$ '+fmt(sd)+'</div></div>';
+    });
     if(!S.contas.length) h+='<div class="metric"><div class="lbl">Nenhuma conta</div><div class="val" style="font-size:13px;color:var(--text3)">Cadastre em Cadastros</div></div>';
     h+='</div>';
+    // ── Saldos dos cartões (limite - total em aberto) ──
     if(S.cartoes.length){
       h+='<div class="grid2" style="margin-bottom:10px">';
-      S.cartoes.forEach(cc=>{ var f=getFatura(cc.id,S.mesAtual,S.anoAtual),dsp=cc.limite-f; h+='<div class="metric"><div class="lbl">💳 '+cc.nome+'</div><div class="val red">-R$ '+fmt(f)+'</div><div class="sub">Disp: R$ '+fmt(dsp)+'</div></div>'; });
+      S.cartoes.forEach(function(cc){
+        var fat=getFatura(cc.id,S.mesAtual,S.anoAtual);
+        var disp=saldoDispCartao(cc.id);
+        h+='<div class="metric"><div class="lbl">💳 '+cc.nome+'</div>'
+          +'<div class="val red">-R$ '+fmt(fat)+'</div>'
+          +'<div class="sub">Disp: <span style="color:var(--green)">R$ '+fmt(disp)+'</span></div></div>';
+      });
       h+='</div>';
     }
-    var tx=S.transacoes.filter(t=>{ var d=new Date(t.data+'T12:00:00'); return d.getMonth()===S.mesAtual&&d.getFullYear()===S.anoAtual; });
-    var ent=tx.filter(t=>t.tipo==='receita'&&t.status==='pago').reduce((a,b)=>a+b.valor,0);
-    var sai=tx.filter(t=>t.tipo==='despesa'&&t.status==='pago').reduce((a,b)=>a+b.valor,0);
-    var entPrev=tx.filter(t=>t.tipo==='receita'&&t.status!=='pago').reduce((a,b)=>a+b.valor,0);
-    var saiPrev=tx.filter(t=>t.tipo==='despesa'&&t.status!=='pago').reduce((a,b)=>a+b.valor,0);
-    var sal=ent-sai;
+    // ── Resumo do mês ──
+    var txMes=S.transacoes.filter(function(t){
+      if(t.cartaoId) return false; // cartão não entra no resumo mensal de conta
+      var d=new Date(t.data+'T12:00:00');
+      return d.getMonth()===S.mesAtual&&d.getFullYear()===S.anoAtual;
+    });
+    var ent=txMes.filter(function(t){return t.tipo==='receita'&&t.status==='pago';}).reduce(function(a,b){return a+b.valor;},0);
+    var sai=txMes.filter(function(t){return t.tipo==='despesa'&&t.status==='pago';}).reduce(function(a,b){return a+b.valor;},0);
+    var entPrev=txMes.filter(function(t){return t.tipo==='receita'&&t.status!=='pago';}).reduce(function(a,b){return a+b.valor;},0);
+    var saiPrev=txMes.filter(function(t){return t.tipo==='despesa'&&t.status!=='pago';}).reduce(function(a,b){return a+b.valor;},0);
     h+='<div class="grid3">';
     h+='<div class="metric"><div class="lbl">Entradas pagas</div><div class="val green">R$ '+fmt(ent)+'</div><div class="sub">Prev: R$ '+fmt(entPrev)+'</div></div>';
     h+='<div class="metric"><div class="lbl">Saídas pagas</div><div class="val red">R$ '+fmt(sai)+'</div><div class="sub">Prev: R$ '+fmt(saiPrev)+'</div></div>';
-    h+='<div class="metric"><div class="lbl">Saldo real</div><div class="val '+(sal>=0?'green':'red')+'">R$ '+fmt(sal)+'</div></div></div>';
+    h+='<div class="metric"><div class="lbl">Saldo total</div><div class="val '+(saldoRealTotal>=0?'green':'red')+'">R$ '+fmt(saldoRealTotal)+'</div></div></div>';
     sa.innerHTML=h;
   }
   var tx=S.transacoes.filter(function(t){
@@ -853,6 +899,9 @@ function renderFatura(){
   if(!fatPaga&&total>0){
     h+='<button class="fat-pagar" onclick="pagarFatura('+_fatCcId+')">Pagar fatura</button>';
   }
+  if(fatPaga&&total>0){
+    h+='<button style="width:100%;padding:11px;background:var(--bg3);color:var(--text2);border:0.5px solid var(--border2);border-radius:var(--radius);font-size:14px;font-weight:500;cursor:pointer;margin-bottom:1rem;font-family:inherit" onclick="reabrirFatura('+_fatCcId+')">↩ Reabrir fatura</button>';
+  }
   if(!txs.length){
     h+='<div class="empty" style="padding:2rem 0">Nenhum lançamento nesta fatura</div>';
   } else {
@@ -876,6 +925,59 @@ function renderFatura(){
     });
   }
   document.getElementById('fat-detalhe').innerHTML=h;
+}
+
+function reabrirFatura(ccId){
+  if(!confirm('Reabrir fatura? Os lançamentos voltarão ao status "não pago" e o valor será estornado na conta.')) return;
+  var cc=S.cartoes.find(function(c){return c.id===ccId;}); if(!cc) return;
+  var txs=S.transacoes.filter(function(t){
+    if(t.cartaoId!==ccId||t.status!=='pago') return false;
+    return txMesFatura(t,cc)===_fatAno+'-'+_fatMes;
+  });
+  var total=Math.round(txs.reduce(function(a,b){return a+b.valor;},0)*100)/100;
+  // Encontrar conta que foi debitada (pela dataPagamento mais recente)
+  // Estornar o valor na conta selecionada pelo usuário
+  var opts=S.contas.map(function(c){
+    return '<option value="'+c.id+'">'+(c.tipo==='banco'?'🏦':'💵')+' '+c.nome+' (R$ '+fmt(c.saldo)+')</option>';
+  }).join('');
+  var div=document.createElement('div');
+  div.id='modal-reabrir-fatura';
+  div.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:500;display:flex;align-items:center;justify-content:center;padding:1rem';
+  div.innerHTML=''
+    +'<div style="background:var(--bg2);border-radius:var(--radius);padding:1.25rem;width:100%;max-width:360px">'
+    +'<h2 style="font-size:15px;font-weight:600;margin-bottom:.25rem;color:var(--text)">Reabrir fatura</h2>'
+    +'<p style="font-size:12px;color:var(--text2);margin-bottom:.75rem">Fatura de '+meses[_fatMes]+' '+_fatAno+'</p>'
+    +'<div style="background:var(--bg3);border-radius:var(--radius-sm);padding:.75rem;margin-bottom:.75rem;display:flex;justify-content:space-between;align-items:center">'
+    +'<span style="font-size:13px;color:var(--text2)">Estorno</span>'
+    +'<span style="font-size:18px;font-weight:700;color:var(--green)">+R$ '+fmt(total)+'</span>'
+    +'</div>'
+    +'<div class="fg" style="margin-bottom:.65rem"><label style="font-size:11px;color:var(--text2);font-weight:500;display:block;margin-bottom:3px">Estornar na conta</label>'
+    +'<select id="reabrir-conta-sel" style="width:100%;padding:9px 10px;border-radius:var(--radius-sm);border:0.5px solid var(--border2);background:var(--bg3);color:var(--text);font-size:13px;font-family:inherit">'+opts+'</select></div>'
+    +'<div style="display:flex;gap:8px;margin-top:1rem">'
+    +'<button class="btn" style="flex:1" onclick="fecharModalReabrir()">Cancelar</button>'
+    +'<button class="btn primary" style="flex:1" onclick="confirmarReabrirFatura('+ccId+','+total+')">Confirmar</button>'
+    +'</div></div>';
+  document.body.appendChild(div);
+}
+
+function fecharModalReabrir(){ var el=document.getElementById('modal-reabrir-fatura'); if(el) el.remove(); }
+
+function confirmarReabrirFatura(ccId,total){
+  var sel=document.getElementById('reabrir-conta-sel');
+  var contaId=parseInt(sel.value);
+  var conta=S.contas.find(function(c){return c.id===contaId;});
+  if(!conta){alert('Selecione uma conta');return;}
+  var cc=S.cartoes.find(function(c){return c.id===ccId;});
+  var txs=S.transacoes.filter(function(t){
+    if(t.cartaoId!==ccId||t.status!=='pago') return false;
+    return txMesFatura(t,cc)===_fatAno+'-'+_fatMes;
+  });
+  txs.forEach(function(t){t.status='nao_pago';delete t.dataPagamento;});
+  conta.saldo=Math.round((conta.saldo+total)*100)/100;
+  saveData();
+  fecharModalReabrir();
+  renderFatura();
+  renderDash();
 }
 
 function pagarFatura(ccId){
