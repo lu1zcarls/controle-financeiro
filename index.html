@@ -306,8 +306,10 @@ tr:hover td{background:var(--bg3)}
         <div class="tgl" id="rep-fixo" onclick="setRep('fixo')">Fixo</div>
         <div class="tgl" id="rep-parcelado" style="display:none" onclick="setRep('parcelado')">Parcelado</div>
       </div>
-      <div id="rep-opts" style="display:none">
-        <select id="rep-freq" onchange="onFreqMuda()">
+      <!-- opções FIXO: frequência -->
+      <div id="rep-opts-fixo" style="display:none">
+        <label style="font-size:11px;color:var(--text2);margin-bottom:4px;display:block">Frequência</label>
+        <select id="rep-freq">
           <option value="semanal">Semanal</option>
           <option value="quinzenal">Quinzenal</option>
           <option value="mensal" selected>Mensal</option>
@@ -315,11 +317,37 @@ tr:hover td{background:var(--bg3)}
           <option value="semestral">Semestral</option>
           <option value="anual">Anual</option>
         </select>
-        <div id="fg-nparc" style="display:none;margin-top:8px">
-          <label style="font-size:11px;color:var(--text2)">Número de parcelas (1–36)</label>
-          <input type="number" id="rep-nparc" min="1" max="36" value="2" oninput="calcParc()" style="margin-top:4px">
-        </div>
-        <div class="info-parc" id="info-parc"></div>
+      </div>
+      <!-- opções PARCELADO: nº de parcelas -->
+      <div id="rep-opts-parc" style="display:none">
+        <label style="font-size:11px;color:var(--text2);margin-bottom:4px;display:block">Número de parcelas (1–24)</label>
+        <select id="rep-nparc" onchange="calcParc()">
+          <option value="1">1x (à vista)</option>
+          <option value="2">2x</option>
+          <option value="3">3x</option>
+          <option value="4">4x</option>
+          <option value="5">5x</option>
+          <option value="6">6x</option>
+          <option value="7">7x</option>
+          <option value="8">8x</option>
+          <option value="9">9x</option>
+          <option value="10">10x</option>
+          <option value="11">11x</option>
+          <option value="12">12x</option>
+          <option value="13">13x</option>
+          <option value="14">14x</option>
+          <option value="15">15x</option>
+          <option value="16">16x</option>
+          <option value="17">17x</option>
+          <option value="18">18x</option>
+          <option value="19">19x</option>
+          <option value="20">20x</option>
+          <option value="21">21x</option>
+          <option value="22">22x</option>
+          <option value="23">23x</option>
+          <option value="24" selected>24x</option>
+        </select>
+        <div class="info-parc" id="info-parc" style="margin-top:6px"></div>
       </div>
     </div>
   </div>
@@ -895,25 +923,36 @@ function setTipo(t){
 
 function setRep(r){
   S.repTipo=r;
-  ['none','fixo','parcelado'].forEach(x=>{var el=document.getElementById('rep-'+x);if(el)el.classList.toggle('active',x===r);});
-  // fixo mostra frequência; parcelado mostra só qtd parcelas; none oculta tudo
-  document.getElementById('rep-opts').style.display=r==='fixo'?'':'none';
-  document.getElementById('fg-nparc').style.display=r==='parcelado'?'':'none';
+  ['none','fixo','parcelado'].forEach(function(x){
+    var el=document.getElementById('rep-'+x);
+    if(el) el.classList.toggle('active',x===r);
+  });
+  document.getElementById('rep-opts-fixo').style.display=r==='fixo'?'':'none';
+  document.getElementById('rep-opts-parc').style.display=r==='parcelado'?'':'none';
   calcParc();
 }
 
 function calcParc(){
   var info=document.getElementById('info-parc');
+  if(!info) return;
   if(S.repTipo==='parcelado'){
-    var n=parseInt(document.getElementById('rep-nparc').value)||2;
-    var v=parseFloat(document.getElementById('l-val').value)||0;
-    if(v>0&&n>0){
-      var parc=Math.floor(v/n*100)/100;
-      var resto=Math.round((v - parc*n)*100)/100;
-      var p1=Math.round((parc+resto)*100)/100;
-      info.textContent=n+'x — 1ª parcela R$ '+fmt(p1)+', demais R$ '+fmt(parc);
-    } else info.textContent='';
-  } else info.textContent='';
+    var nEl=document.getElementById('rep-nparc');
+    var n=nEl?parseInt(nEl.value)||2:2;
+    var vEl=document.getElementById('l-val');
+    var v=vEl?parseFloat(vEl.value)||0:0;
+    if(v>0&&n>1){
+      var parcBase=Math.floor(v/n*100)/100;
+      var resto=Math.round((v-parcBase*n)*100)/100;
+      var p1=Math.round((parcBase+resto)*100)/100;
+      info.textContent=n+'x — 1ª parcela R$ '+fmt(p1)+(p1!==parcBase?', demais R$ '+fmt(parcBase):'');
+    } else if(v>0&&n===1){
+      info.textContent='Pagamento à vista: R$ '+fmt(v);
+    } else {
+      info.textContent='';
+    }
+  } else {
+    info.textContent='';
+  }
 }
 
 function abrirModalLanc(){
@@ -961,10 +1000,10 @@ function editarLanc(id){
       var rf=document.getElementById('rep-freq');
       if(rf) rf.value=t.freq;
     }
-    // parcelas
+    // parcelas — setar no select
     if(t.rep==='parcelado'&&t.parcTotal){
       var rp=document.getElementById('rep-nparc');
-      if(rp) rp.value=t.parcTotal;
+      if(rp) rp.value=String(t.parcTotal);
     }
     // mês fatura — recriar opções e selecionar
     onContaMuda();
@@ -1030,7 +1069,7 @@ function salvarLanc(){
       freq=rfEl?rfEl.value:'mensal';
     }
     if(rep==='parcelado'){
-      parcAtual=editId?(S.transacoes.find(x=>x.id===editId)||{}).parcAtual||1:1;
+      parcAtual=editId?(S.transacoes.find(function(x){return x.id===editId;})||{}).parcAtual||1:1;
       var rpEl=document.getElementById('rep-nparc');
       parcTotal=rpEl?parseInt(rpEl.value)||2:2;
       var parcBase=Math.floor(val/parcTotal*100)/100;
