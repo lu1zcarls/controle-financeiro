@@ -294,8 +294,13 @@ tr:hover td{background:var(--bg3)}
   <div class="fg"><label>Valor (R$)</label><input type="number" id="l-val" placeholder="0,00" min="0" step="0.01" oninput="calcParc()"></div>
   <div class="fg"><label>Descrição</label><input type="text" id="l-desc" placeholder="Ex: Mercado, Salário..."></div>
   <div class="fg" id="fg-cat"><label>Categoria</label><select id="l-cat"></select></div>
-  <div class="fg"><label>Pago com</label><select id="l-conta" onchange="onContaMuda()"></select></div>
-  <div class="fg" id="fg-mes-fatura" style="display:none"><label>Mês da fatura</label><select id="l-mes-fatura"></select></div>
+  <div class="fg">
+    <label>Pago com</label>
+    <div style="display:flex;align-items:center;gap:8px">
+      <select id="l-conta" onchange="onContaMuda()" style="flex:1"></select>
+      <select id="l-mes-fatura" style="display:none;color:#1D9E75;font-weight:600;font-size:12px;border:0.5px solid #1D9E75;background:var(--bg3);border-radius:var(--radius-sm);padding:6px 8px;cursor:pointer;font-family:inherit;flex-shrink:0;max-width:120px"></select>
+    </div>
+  </div>
   <div class="fg" id="fg-dest" style="display:none"><label>Conta destino</label><select id="l-dest"></select></div>
   <div class="fg"><label>Data</label><input type="date" id="l-data"></div>
   <div id="fg-rep">
@@ -902,10 +907,37 @@ function popSelects(){
 function onContaMuda(){
   var v=document.getElementById('l-conta').value;
   var isCC=v.startsWith('cc_');
-  document.getElementById('rep-parcelado').style.display=isCC?'':'none';
-  if(!isCC&&S.repTipo==='parcelado') setRep('none');
   var isTransf=S.tipoLanc==='transferencia';
+
+  // Mostrar/ocultar opção Parcelado
+  var elParc=document.getElementById('rep-parcelado');
+  if(elParc) elParc.style.display=(isCC&&!isTransf)?'':'none';
+  if(!isCC&&S.repTipo==='parcelado') setRep('none');
+
+  // Conta destino (transferência)
   document.getElementById('fg-dest').style.display=isTransf?'':'none';
+
+  // Select inline de mês da fatura
+  var mfSel=document.getElementById('l-mes-fatura');
+  if(!mfSel) return;
+  if(isCC&&!isTransf){
+    mfSel.style.display='';
+    // Só repopula se estiver vazio ou mudou de cartão
+    mfSel.innerHTML='';
+    var hoje=new Date();
+    // meses: mês anterior, atual e próximos 6
+    for(var i=-1;i<=6;i++){
+      var d=new Date(hoje.getFullYear(), hoje.getMonth()+i, 1);
+      var o=document.createElement('option');
+      o.value=d.getFullYear()+'-'+(d.getMonth()+1);
+      o.textContent='Fatura de '+meses[d.getMonth()];
+      if(i===0) o.selected=true;
+      mfSel.appendChild(o);
+    }
+  } else {
+    mfSel.style.display='none';
+    mfSel.innerHTML='';
+  }
 }
 
 function setTipo(t){
@@ -1007,10 +1039,10 @@ function editarLanc(id){
     }
     // mês fatura — recriar opções e selecionar
     onContaMuda();
+    // restaurar mês da fatura após onContaMuda popular o select
     if(t.mesFatura){
       var mfSel=document.getElementById('l-mes-fatura');
       if(mfSel){
-        // adicionar opção se não existir
         var found=false;
         for(var oi=0;oi<mfSel.options.length;oi++){
           if(mfSel.options[oi].value===t.mesFatura){mfSel.selectedIndex=oi;found=true;break;}
@@ -1019,7 +1051,7 @@ function editarLanc(id){
           var pts=t.mesFatura.split('-');
           var o=document.createElement('option');
           o.value=t.mesFatura;
-          o.textContent=meses[parseInt(pts[1])-1]+' '+pts[0];
+          o.textContent='Fatura de '+meses[parseInt(pts[1])-1];
           mfSel.insertBefore(o,mfSel.firstChild);
           mfSel.selectedIndex=0;
         }
@@ -1059,10 +1091,9 @@ function salvarLanc(){
     var status=document.getElementById('l-status').value||'nao_pago';
     var rep=S.repTipo||'none';
     var freq=null,parcAtual=null,parcTotal=null,mesFatura=null;
-    var fgMes=document.getElementById('fg-mes-fatura');
-    if(fgMes&&fgMes.style.display!=='none'){
-      var mfEl=document.getElementById('l-mes-fatura');
-      if(mfEl) mesFatura=mfEl.value||null;
+    var mfEl=document.getElementById('l-mes-fatura');
+    if(mfEl&&mfEl.style.display!=='none'&&mfEl.value){
+      mesFatura=mfEl.value;
     }
     if(rep==='fixo'){
       var rfEl=document.getElementById('rep-freq');
