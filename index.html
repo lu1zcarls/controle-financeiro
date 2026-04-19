@@ -593,20 +593,37 @@ function renderPage(p){
   else if(p==='relatorio') renderRel();
 }
 function fmt(v){ return parseFloat(v||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+function dataHoje(){
+  var d=new Date();
+  var y=d.getFullYear();
+  var m=String(d.getMonth()+1).padStart(2,'0');
+  var day=String(d.getDate()).padStart(2,'0');
+  return y+'-'+m+'-'+day;
+}
 function ccNome(id){ var c=S.cartoes.find(x=>x.id===id); return c?c.nome:'?'; }
 
 function toggleSaldos(){ S.saldosVis=!S.saldosVis; saveData(); document.getElementById('btn-hide').textContent=S.saldosVis?'Ocultar':'Exibir'; renderDash(); }
 function mudaMes(d){ S.mesAtual+=d; if(S.mesAtual>11){S.mesAtual=0;S.anoAtual++;} if(S.mesAtual<0){S.mesAtual=11;S.anoAtual--;} saveData(); renderDash(); }
 
 function getFatura(ccId,mes,ano){
-  var cc=S.cartoes.find(c=>c.id===ccId); if(!cc) return 0;
-  return S.transacoes.filter(t=>{
+  var cc=S.cartoes.find(function(c){return c.id===ccId;}); if(!cc) return 0;
+  return S.transacoes.filter(function(t){
     if(t.cartaoId!==ccId) return false;
-    var d=new Date(t.data+'T12:00:00'); var fm,fa;
-    if(d.getDate()<=cc.fechamento){fm=d.getMonth();fa=d.getFullYear();}
-    else{fm=d.getMonth()+1;fa=d.getFullYear();if(fm>11){fm=0;fa++;}}
-    return fm===mes&&fa===ano;
-  }).reduce((a,b)=>a+b.valor,0);
+    return txMesFatura(t,cc)===ano+'-'+mes;
+  }).reduce(function(a,b){return a+b.valor;},0);
+}
+function txMesFatura(t,cc){
+  // Se tem mesFatura definido (parcelas), usar diretamente
+  if(t.mesFatura){
+    var pts=t.mesFatura.split('-');
+    return parseInt(pts[0])+'-'+(parseInt(pts[1])-1);
+  }
+  // Senão calcular pelo dia de fechamento
+  var d=new Date(t.data+'T12:00:00');
+  var fm,fa;
+  if(d.getDate()<=cc.fechamento){fm=d.getMonth();fa=d.getFullYear();}
+  else{fm=d.getMonth()+1;fa=d.getFullYear();if(fm>11){fm=0;fa++;}}
+  return fa+'-'+fm;
 }
 
 function renderDash(){
@@ -636,34 +653,100 @@ function renderDash(){
     h+='<div class="metric"><div class="lbl">Saldo real</div><div class="val '+(sal>=0?'green':'red')+'">R$ '+fmt(sal)+'</div></div></div>';
     sa.innerHTML=h;
   }
-  var tx=S.transacoes.filter(t=>{ var d=new Date(t.data+'T12:00:00'); return d.getMonth()===S.mesAtual&&d.getFullYear()===S.anoAtual; });
-  renderTxList(tx,'lista-tx',true);
+  var tx=S.transacoes.filter(function(t){
+    if(t.cartaoId){
+      var cc=S.cartoes.find(function(c){return c.id===t.cartaoId;});
+      if(!cc) return false;
+      return txMesFatura(t,cc)===S.anoAtual+'-'+S.mesAtual;
+    }
+    var d=new Date(t.data+'T12:00:00');
+    return d.getMonth()===S.mesAtual&&d.getFullYear()===S.anoAtual;
+  });
+  renderTxList(tx,'lista-tx',true,S.mesAtual,S.anoAtual);
 }
 
-function renderTxList(txs,elId,grp){
+function renderTxList(txs,elId,grp,mesRef,anoRef){
   var el=document.getElementById(elId); if(!el) return;
   if(!txs.length){el.innerHTML='<div class="empty">Nenhum lançamento</div>';return;}
-  txs=txs.slice().sort((a,b)=>new Date(b.data)-new Date(a.data));
-  var faturas={},normais=[];
-  txs.forEach(t=>{ if(t.cartaoId){var k='cc_'+t.cartaoId; if(!faturas[k]) faturas[k]={ccId:t.cartaoId,txs:[],data:t.data}; faturas[k].txs.push(t);} else normais.push(t); });
+
+  // Separar normais e agrupar cartões por ccId
+  var faturas={}, normais=[];
+  txs.forEach(function(t){
+    if(t.cartaoId){
+      var k='cc_'+t.cartaoId;
+      if(!faturas[k]) faturas[k]={ccId:t.cartaoId,txs:[]};
+      faturas[k].txs.push(t);
+    } else {
+      normais.push(t);
+    }
+  });
+
+  // Grupos por data para lançamentos normais
   var grupos={};
-  normais.forEach(t=>{ if(!grupos[t.data]) grupos[t.data]=[]; grupos[t.data].push(t); });
-  Object.values(faturas).forEach(f=>{ var d=f.txs[0].data; if(!grupos[d]) grupos[d]=[]; grupos[d].unshift({_fat:true,ccId:f.ccId,total:f.txs.reduce((a,b)=>a+b.valor,0),data:d}); });
-  var sorted=Object.keys(grupos).sort((a,b)=>new Date(b)-new Date(a));
+  normais.sort(function(a,b){return new Date(b.data)-new Date(a.data);});
+  normais.forEach(function(t){
+    if(!grupos[t.data]) grupos[t.data]=[];
+    grupos[t.data].push(t);
+  });
+
+  // Para cada cartão: calcular data de vencimento da fatura do mês de referência
+  // e colocar a fatura consolidada nessa data
+  Object.values(faturas).forEach(function(f){
+    var cc=S.cartoes.find(function(c){return c.id===f.ccId;});
+    if(!cc) return;
+    var mes=mesRef!==undefined?mesRef:S.mesAtual;
+    var ano=anoRef!==undefined?anoRef:S.anoAtual;
+    // Data de vencimento = dia de vencimento do cartão no mês de referência
+    var vencDia=cc.vencimento;
+    var vencMes=mes;
+    var vencAno=ano;
+    // Formatar como YYYY-MM-DD para usar como chave de grupo
+    var dataVenc=vencAno+'-'+String(vencMes+1).padStart(2,'0')+'-'+String(vencDia).padStart(2,'0');
+    var total=f.txs.reduce(function(a,b){return a+b.valor;},0);
+    var fatPaga=f.txs.length>0&&f.txs.every(function(t){return t.status==='pago';});
+    if(!grupos[dataVenc]) grupos[dataVenc]=[];
+    grupos[dataVenc].unshift({
+      _fat:true,
+      ccId:f.ccId,
+      total:total,
+      data:dataVenc,
+      paga:fatPaga
+    });
+  });
+
+  // Ordenar datas
+  var sorted=Object.keys(grupos).sort(function(a,b){return new Date(b)-new Date(a);});
   var html='';
-  sorted.forEach(dk=>{
-    if(grp){ var d=new Date(dk+'T12:00:00'); html+='<div class="date-grp">'+d.getDate()+' de '+meses[d.getMonth()]+'</div>'; }
-    grupos[dk].forEach(t=>{
+  sorted.forEach(function(dk){
+    if(grp){
+      var d=new Date(dk+'T12:00:00');
+      html+='<div class="date-grp">'+d.getDate()+' de '+meses[d.getMonth()]+'</div>';
+    }
+    grupos[dk].forEach(function(t){
       if(t._fat){
-        html+='<div class="tx-row" onclick="abrirFatura('+t.ccId+')"><div class="tx-icon" style="background:#FAECE7">💳</div><div class="tx-info"><div class="name">Fatura '+ccNome(t.ccId)+'</div><div class="sub">Toque para ver detalhes</div></div><div class="tx-val"><div class="amount red">-R$ '+fmt(t.total)+'</div><div class="st"><span class="badge npago">não pago</span></div></div></div>';
+        var badgeSt=t.paga?'<span class="badge pago">pago</span>':'<span class="badge npago">não pago</span>';
+        html+='<div class="tx-row" onclick="abrirFatura('+t.ccId+')">'
+          +'<div class="tx-icon" style="background:#FAECE7">💳</div>'
+          +'<div class="tx-info"><div class="name">Fatura '+ccNome(t.ccId)+'</div>'
+          +'<div class="sub">Toque para ver detalhes</div></div>'
+          +'<div class="tx-val"><div class="amount red">-R$ '+fmt(t.total)+'</div>'
+          +'<div class="st">'+badgeSt+'</div></div></div>';
       } else {
-        var cat=S.categorias.find(c=>c.id===t.catId)||{icone:'📋',nome:'Outros'};
-        var pg=t.contaId?(S.contas.find(c=>c.id===t.contaId)||{nome:'?'}).nome:ccNome(t.cartaoId);
+        var cat=S.categorias.find(function(c){return c.id===t.catId;})||{icone:'📋',nome:'Outros'};
+        var pg=t.contaId?(S.contas.find(function(c){return c.id===t.contaId;})||{nome:'?'}).nome:ccNome(t.cartaoId);
         var sn=t.tipo==='despesa'?'-':(t.tipo==='receita'?'+':'');
         var cor=t.tipo==='despesa'?'red':(t.tipo==='receita'?'green':'');
-        var st=t.status==='pago'?'<span class="badge pago">pago</span>':(t.status==='nao_recebido'?'<span class="badge nrec">não recebido</span>':'<span class="badge npago">não pago</span>');
-        var sub=pg; if(t.rep==='parcelado') sub+=' &bull; '+t.parcAtual+'/'+t.parcTotal;
-        html+='<div class="tx-row" onclick="editarLanc('+t.id+')"><div class="tx-icon" style="background:#E1F5EE">'+cat.icone+'</div><div class="tx-info"><div class="name">'+t.desc+'</div><div class="sub">'+sub+'</div></div><div class="tx-val"><div class="amount '+cor+'">'+sn+'R$ '+fmt(t.valor)+'</div><div class="st">'+st+'</div></div></div>';
+        var st=t.status==='pago'?'<span class="badge pago">pago</span>'
+          :(t.status==='nao_recebido'?'<span class="badge nrec">não recebido</span>'
+          :'<span class="badge npago">não pago</span>');
+        var sub=pg;
+        if(t.rep==='parcelado') sub+=' &bull; '+t.parcAtual+'/'+t.parcTotal;
+        html+='<div class="tx-row" onclick="editarLanc('+t.id+')">'
+          +'<div class="tx-icon" style="background:#E1F5EE">'+cat.icone+'</div>'
+          +'<div class="tx-info"><div class="name">'+t.desc+'</div>'
+          +'<div class="sub">'+sub+'</div></div>'
+          +'<div class="tx-val"><div class="amount '+cor+'">'+sn+'R$ '+fmt(t.valor)+'</div>'
+          +'<div class="st">'+st+'</div></div></div>';
       }
     });
   });
@@ -681,11 +764,19 @@ function renderLancs(){
   if(S.mesLanc===undefined){S.mesLanc=S.mesAtual;S.anoLanc=S.anoAtual;}
   var el=document.getElementById('mes-label-lanc');
   if(el) el.textContent=meses[S.mesLanc]+' '+S.anoLanc;
-  var tx=S.transacoes.filter(t=>{ var d=new Date(t.data+'T12:00:00'); return d.getMonth()===S.mesLanc&&d.getFullYear()===S.anoLanc; });
-  if(S.filtroTx==='transf') tx=tx.filter(t=>t.tipo==='transferencia');
-  else if(S.filtroTx!=='todos') tx=tx.filter(t=>t.tipo===S.filtroTx);
-  ['todos','despesa','receita','transf'].forEach(f=>{ var el=document.getElementById('fil-'+f); if(el) el.classList.toggle('primary',S.filtroTx===f); });
-  renderTxList(tx,'lista-tx-full',true);
+  var tx=S.transacoes.filter(function(t){
+    if(t.cartaoId){
+      var cc=S.cartoes.find(function(c){return c.id===t.cartaoId;});
+      if(!cc) return false;
+      return txMesFatura(t,cc)===S.anoLanc+'-'+S.mesLanc;
+    }
+    var d=new Date(t.data+'T12:00:00');
+    return d.getMonth()===S.mesLanc&&d.getFullYear()===S.anoLanc;
+  });
+  if(S.filtroTx==='transf') tx=tx.filter(function(t){return t.tipo==='transferencia';});
+  else if(S.filtroTx!=='todos') tx=tx.filter(function(t){return t.tipo===S.filtroTx;});
+  ['todos','despesa','receita','transf'].forEach(function(f){ var el=document.getElementById('fil-'+f); if(el) el.classList.toggle('primary',S.filtroTx===f); });
+  renderTxList(tx,'lista-tx-full',true,S.mesLanc,S.anoLanc);
 }
 function filtrarTx(f){ S.filtroTx=f; renderLancs(); }
 
@@ -737,15 +828,7 @@ function renderFatura(){
   if(mlEl) mlEl.textContent=meses[_fatMes]+' '+_fatAno;
   var txs=S.transacoes.filter(function(t){
     if(t.cartaoId!==_fatCcId) return false;
-    if(t.mesFatura){
-      var pts=t.mesFatura.split('-');
-      return parseInt(pts[0])===_fatAno&&parseInt(pts[1])-1===_fatMes;
-    }
-    var d=new Date(t.data+'T12:00:00');
-    var fm,fa;
-    if(d.getDate()<=cc.fechamento){fm=d.getMonth();fa=d.getFullYear();}
-    else{fm=d.getMonth()+1;fa=d.getFullYear();if(fm>11){fm=0;fa++;}}
-    return fm===_fatMes&&fa===_fatAno;
+    return txMesFatura(t,cc)===_fatAno+'-'+_fatMes;
   });
   var total=txs.reduce(function(a,b){return a+b.valor;},0);
   var fatPaga=txs.length>0&&txs.every(function(t){return t.status==='pago';});
@@ -1000,7 +1083,7 @@ function abrirModalLanc(){
     setRep('none');
     document.getElementById('l-val').value='';
     document.getElementById('l-desc').value='';
-    document.getElementById('l-data').value=new Date().toISOString().split('T')[0];
+    document.getElementById('l-data').value=dataHoje();
     document.getElementById('l-status').value='nao_pago';
     abrirModal('modal-lanc');
   } catch(e){ console.error('abrirModalLanc:',e); alert('Erro ao abrir formulário: '+e.message); }
@@ -1020,7 +1103,7 @@ function editarLanc(id){
     setRep(S.repTipo);
     document.getElementById('l-val').value=t.valor||'';
     document.getElementById('l-desc').value=t.desc||'';
-    document.getElementById('l-data').value=t.data||new Date().toISOString().split('T')[0];
+    document.getElementById('l-data').value=t.data||dataHoje();
     document.getElementById('l-status').value=t.status||'nao_pago';
     // ocultar status se for cartão
     var esSt=document.getElementById('fg-status');
@@ -1093,7 +1176,7 @@ function salvarLanc(){
     var contaId=null,cartaoId=null;
     if(cv.startsWith('c_')) contaId=parseInt(cv.replace('c_',''));
     else if(cv.startsWith('cc_')) cartaoId=parseInt(cv.replace('cc_',''));
-    var data=document.getElementById('l-data').value||new Date().toISOString().split('T')[0];
+    var data=document.getElementById('l-data').value||dataHoje();
     var status=document.getElementById('l-status').value||'nao_pago';
     var rep=S.repTipo||'none';
     var freq=null,parcAtual=null,parcTotal=null,mesFatura=null;
